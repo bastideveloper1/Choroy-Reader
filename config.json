@@ -7,7 +7,7 @@
           "nombre": "MIT Technology Review",
           "url": "https://www.technologyreview.com/",
           "url_feed": "https://www.technologyreview.com/feed/",
-          "ultima_actualizacion": 1790183211.044689,
+          "ultima_actualizacion": 1790201241.0206175,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -16,7 +16,7 @@
           "nombre": "Ethic",
           "url": "https://ethic.es/",
           "url_feed": "https://ethic.es/feed/",
-          "ultima_actualizacion": 1790182995.7113347,
+          "ultima_actualizacion": 1790201241.7621353,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -25,7 +25,7 @@
           "nombre": "Futuro.cl",
           "url": "https://www.futuro.cl/",
           "url_feed": "https://feeds.feedburner.com/futuro/TKe5xCwmkht",
-          "ultima_actualizacion": 1790182997.4126854,
+          "ultima_actualizacion": 1790201242.277352,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -39,7 +39,7 @@
           "nombre": "The Record",
           "url": "https://therecord.media/",
           "url_feed": "https://therecord.media/feed/",
-          "ultima_actualizacion": 1790182999.0099497,
+          "ultima_actualizacion": 1790183216.2044752,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -49,7 +49,7 @@
           "nombre": "Cybernews",
           "url": "https://cybernews.com/",
           "url_feed": null,
-          "ultima_actualizacion": 1790183001.0726743,
+          "ultima_actualizacion": 1790183216.7558022,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -58,7 +58,7 @@
           "nombre": "Dark Reading",
           "url": "https://www.darkreading.com",
           "url_feed": "https://www.darkreading.com/rss.xml",
-          "ultima_actualizacion": 1790183001.9997256,
+          "ultima_actualizacion": 1790183218.0716083,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -68,7 +68,7 @@
           "nombre": "BleepingComputer",
           "url": "https://www.bleepingcomputer.com/",
           "url_feed": "https://www.bleepingcomputer.com/feed/",
-          "ultima_actualizacion": 1790183008.5484345,
+          "ultima_actualizacion": 1790183224.698752,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "max_articulos": 5,
@@ -79,7 +79,7 @@
           "nombre": "KrebsOnSecurity",
           "url": "https://krebsonsecurity.com/",
           "url_feed": "https://krebsonsecurity.com/feed/",
-          "ultima_actualizacion": 1790183010.898217,
+          "ultima_actualizacion": 1790183231.1709166,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -93,7 +93,7 @@
           "nombre": "Schneier on Security",
           "url": "https://www.schneier.com/",
           "url_feed": "https://www.schneier.com/feed/",
-          "ultima_actualizacion": 1790183014.8678656,
+          "ultima_actualizacion": 1790201242.1672704,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -103,7 +103,7 @@
           "nombre": "Mozilla Blog",
           "url": "https://blog.mozilla.org/en/",
           "url_feed": "https://blog.mozilla.org/en/feed/",
-          "ultima_actualizacion": 1790183016.1462345,
+          "ultima_actualizacion": 1790183237.2882016,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -118,7 +118,7 @@
           "nombre": "PrivacyTools",
           "url": "https://privacytools.io/es",
           "url_feed": null,
-          "ultima_actualizacion": 1790183018.1618364,
+          "ultima_actualizacion": 1790201244.005381,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -127,7 +127,7 @@
           "nombre": "EFF",
           "url": "https://www.eff.org/",
           "url_feed": "https://www.eff.org/rss.xml",
-          "ultima_actualizacion": 1790183018.8693852,
+          "ultima_actualizacion": 1790201242.6043549,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -136,7 +136,7 @@
           "nombre": "Privacy Guides",
           "url": "https://www.privacyguides.org/posts/tag/articles/",
           "url_feed": "https://www.privacyguides.org/rss/",
-          "ultima_actualizacion": 1790183023.9118207,
+          "ultima_actualizacion": 1790201245.4319239,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -146,7 +146,7 @@
           "nombre": "Matrix.org",
           "url": "https://matrix.org/",
           "url_feed": "https://matrix.org/atom.xml",
-          "ultima_actualizacion": 1790183028.4231126,
+          "ultima_actualizacion": 1790201245.941701,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -156,7 +156,7 @@
           "nombre": "EDRi",
           "url": "https://edri.org/",
           "url_feed": "https://edri.org/feed/",
-          "ultima_actualizacion": 1790183037.9993083,
+          "ultima_actualizacion": 1790201252.9607606,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -165,7 +165,7 @@
           "nombre": "Tuta",
           "url": "https://tuta.com/es/blog",
           "url_feed": "https://tuta.com/blog/feed.xml",
-          "ultima_actualizacion": 1790183050.3930037,
+          "ultima_actualizacion": 1790201253.2777808,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -175,7 +175,7 @@
           "nombre": "Proton",
           "url": "https://proton.me/es-419/blog",
           "url_feed": "https://proton.me/blog/feed",
-          "ultima_actualizacion": 1790183058.3351347,
+          "ultima_actualizacion": 1790201250.1979127,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -185,7 +185,7 @@
           "nombre": "Signal",
           "url": "https://signal.org/blog/",
           "url_feed": "https://signal.org/blog/rss.xml",
-          "ultima_actualizacion": 1790183059.2361221,
+          "ultima_actualizacion": 1790201245.771729,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -195,7 +195,7 @@
           "nombre": "Ente",
           "url": "https://ente.com/blog/",
           "url_feed": "https://ente.com/rss.xml",
-          "ultima_actualizacion": 1790183061.001279,
+          "ultima_actualizacion": 1790201246.5582328,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -204,7 +204,7 @@
           "nombre": "Tor Project",
           "url": "https://blog.torproject.org/",
           "url_feed": "https://blog.torproject.org/feed.xml",
-          "ultima_actualizacion": 1790183068.6364968,
+          "ultima_actualizacion": 1790201250.390352,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -214,7 +214,7 @@
           "nombre": "Mastodon",
           "url": "https://blog.joinmastodon.org/",
           "url_feed": "https://blog.joinmastodon.org/index.xml",
-          "ultima_actualizacion": 1790183070.1007311,
+          "ultima_actualizacion": 1790201246.9456384,
           "intervalo_min": 30,
           "mostrar_imagen": true,
           "modo_titulo": "en_es",
@@ -224,7 +224,7 @@
           "nombre": "SimpleLogin",
           "url": "https://simplelogin.io/blog/",
           "url_feed": "https://simplelogin.io/blog/index.xml",
-          "ultima_actualizacion": 1790183078.429105,
+          "ultima_actualizacion": 1790201255.263295,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -233,7 +233,7 @@
           "nombre": "Quad9",
           "url": "https://quad9.net/es/news/blog/",
           "url_feed": null,
-          "ultima_actualizacion": 1790183087.9640994,
+          "ultima_actualizacion": 1790201256.9478183,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -242,7 +242,7 @@
           "nombre": "Mullvad",
           "url": "https://mullvad.net/es/blog",
           "url_feed": "https://mullvad.net/blog/feed/atom/",
-          "ultima_actualizacion": 1790183108.8088791,
+          "ultima_actualizacion": 1790201262.51607,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -251,7 +251,7 @@
           "nombre": "Mozilla",
           "url": "https://blog.mozilla.org/en/",
           "url_feed": "https://blog.mozilla.org/en/feed/",
-          "ultima_actualizacion": 1790183111.0218985,
+          "ultima_actualizacion": 1790201242.480962,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -260,7 +260,7 @@
           "nombre": "Bitwarden",
           "url": "https://bitwarden.com/blog/",
           "url_feed": null,
-          "ultima_actualizacion": 1790183112.2360406,
+          "ultima_actualizacion": 1790201251.4836166,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -269,7 +269,7 @@
           "nombre": "Keep Android Open",
           "url": "https://keepandroidopen.org/es/",
           "url_feed": null,
-          "ultima_actualizacion": 1790183112.8002346,
+          "ultima_actualizacion": 1790201251.8562908,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -278,7 +278,7 @@
           "nombre": "Fastmail",
           "url": "https://www.fastmail.com/blog/",
           "url_feed": "https://www.fastmail.com/blog/feed.xml",
-          "ultima_actualizacion": 1790183113.4537108,
+          "ultima_actualizacion": 1790201252.513722,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -287,7 +287,7 @@
           "nombre": "Yubico",
           "url": "https://www.yubico.com/blog/?lang=es",
           "url_feed": "https://www.yubico.com/feed/?lang=es",
-          "ultima_actualizacion": 1790183115.5567036,
+          "ultima_actualizacion": 1790201253.070571,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -296,7 +296,7 @@
           "nombre": "Have I Been Pwned",
           "url": "https://haveibeenpwned.com/",
           "url_feed": "https://haveibeenpwned.com/feed/breaches/",
-          "ultima_actualizacion": 1790183118.2825742,
+          "ultima_actualizacion": 1790201253.3973963,
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "mostrar_imagen": true
@@ -316,7 +316,7 @@
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "favicon_personalizado": null,
-          "ultima_actualizacion": 1790183120.3343768
+          "ultima_actualizacion": 1790201241.90991
         },
         {
           "nombre": "Cybernews",
@@ -328,7 +328,7 @@
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "favicon_personalizado": null,
-          "ultima_actualizacion": 1790183121.802383
+          "ultima_actualizacion": 1790201243.1925774
         },
         {
           "nombre": "Dark Reading",
@@ -340,7 +340,7 @@
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "favicon_personalizado": null,
-          "ultima_actualizacion": 1790183122.4985015
+          "ultima_actualizacion": 1790201241.3710394
         },
         {
           "nombre": "The Hacker News",
@@ -352,7 +352,7 @@
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "favicon_personalizado": null,
-          "ultima_actualizacion": 1790183126.703553
+          "ultima_actualizacion": 1790201258.7561245
         },
         {
           "nombre": "BleepingComputer",
@@ -364,7 +364,7 @@
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "favicon_personalizado": null,
-          "ultima_actualizacion": 1790183129.969279
+          "ultima_actualizacion": 1790201244.703971
         },
         {
           "nombre": "KrebsOnSecurity",
@@ -376,7 +376,7 @@
           "modo_titulo": "en_es",
           "traduccion_es": true,
           "favicon_personalizado": null,
-          "ultima_actualizacion": 1790183130.4185822
+          "ultima_actualizacion": 1790201247.6245563
         }
       ]
     },
@@ -386,26 +386,40 @@
     }
   ],
   "vistos": [
-    "https://www.futuro.cl/2026/09/este-festival-prepara-un-encuentro-sobre-democracia-y-tendra-a-un-inesperado-protagonista-en-santiago/",
     "https://therecord.media/two-arrested-in-uk-after-microsoft-takedown-eviltokens",
-    "https://www.bleepingcomputer.com/news/security/wordpress-click2shell-flaw-lets-hackers-execute-php-on-the-server/",
-    "https://www.privacyguides.org/posts/2026/03/03/how-to-game-privately/",
-    "https://www.bleepingcomputer.com/news/security/researchers-escape-openai-codex-sandbox-to-run-commands-on-host/",
-    "https://blog.joinmastodon.org/2026/09/trunk-tidbits-august-2026/",
-    "https://www.bleepingcomputer.com/news/security/webinar-tomorrow-inside-real-world-google-workspace-breaches/",
-    "https://ente.com/blog/locker-document-scanner/",
-    "https://www.bleepingcomputer.com/news/security/malicious-npm-packages-evade-install-script-defenses-at-runtime/",
-    "https://www.technologyreview.com/2026/09/23/1144966/the-download-india-smart-glasses-ai-trillion-dollar-gamble/",
     "https://blog.torproject.org/new-alpha-release-tor-browser-160a12/",
-    "https://matrix.org/blog/2026/09/18/this-week-in-matrix-2026-09-18/",
-    "https://www.eff.org/deeplinks/2026/09/dc-circuit-must-vacate-drone-flight-restriction-criminalized-recording-immigration",
+    "https://www.bleepingcomputer.com/news/security/webinar-tomorrow-inside-real-world-google-workspace-breaches/",
     "https://www.technologyreview.com/2026/09/21/1144834/the-download-investigating-deaths-at-the-us-borders-virtual-wall/",
+    "https://www.bleepingcomputer.com/news/security/researchers-escape-openai-codex-sandbox-to-run-commands-on-host/",
     "https://ethic.es/entrevista-susan-c-stokes",
-    "https://therecord.media/ai-set-to-help-attackers-more-than-defenders"
+    "https://www.futuro.cl/2026/09/de-una-forma-u-otra-la-perversa-historia-detras-de-one-way-or-another-de-blondie/",
+    "https://tuta.com/blog/countries-ditching-microsoft-choosing-linux-digital-sovereignty",
+    "https://blog.joinmastodon.org/2026/09/trunk-tidbits-august-2026/",
+    "https://www.privacyguides.org/posts/2026/06/01/no-right-to-remain-silent-negative-rights-in-a-positive-rights-world/",
+    "https://matrix.org/blog/2026/09/18/this-week-in-matrix-2026-09-18/",
+    "https://therecord.media/ai-set-to-help-attackers-more-than-defenders",
+    "https://matrix.org/blog/2026/09/04/this-week-in-matrix-2026-09-04/",
+    "https://www.technologyreview.com/2026/09/23/1144966/the-download-india-smart-glasses-ai-trillion-dollar-gamble/",
+    "https://www.bleepingcomputer.com/news/security/wordpress-click2shell-flaw-lets-hackers-execute-php-on-the-server/",
+    "https://www.darkreading.com/cyber-risk/relays-masking-chinese-access-frontier-ai-models",
+    "https://www.privacyguides.org/posts/2026/03/03/how-to-game-privately/",
+    "https://thehackernews.com/2026/09/windows-malware-is-built-to-let-up-to.html",
+    "https://www.futuro.cl/2026/09/este-festival-prepara-un-encuentro-sobre-democracia-y-tendra-a-un-inesperado-protagonista-en-santiago/",
+    "https://www.bleepingcomputer.com/news/security/malicious-npm-packages-evade-install-script-defenses-at-runtime/",
+    "https://ente.com/blog/locker-document-scanner/",
+    "https://www.eff.org/deeplinks/2026/09/dc-circuit-must-vacate-drone-flight-restriction-criminalized-recording-immigration"
   ],
-  "tema": "verde_neon",
-  "color": "verde_neon",
+  "tema": "periodico",
+  "color": "periodico",
   "mostrar_titulo_es": true,
   "articulos_por_fila": 3,
-  "imagenes_hover_activadas": true
+  "imagenes_hover_activadas": true,
+  "radar_activo": false,
+  "radar_palabras": [
+    "ciberseguridad",
+    "privacidad",
+    "linux",
+    "mint",
+    "encriptar"
+  ]
 }
