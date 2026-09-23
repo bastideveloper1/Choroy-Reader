@@ -15,11 +15,90 @@ from datetime import datetime
 from email.utils import parsedate_to_datetime
 
 try:
-    from PIL import Image, ImageTk, ImageDraw, ImageOps
+    from PIL import Image, ImageDraw, ImageOps
     import io
     PIL_DISPONIBLE = True
 except ImportError:
     PIL_DISPONIBLE = False
+
+
+def foto_tk(imagen):
+    """Convierte Pillow a Tk sin depender del paquete opcional ImageTk."""
+    buffer = io.BytesIO()
+    imagen.save(buffer, format="PNG")
+    return tk.PhotoImage(data=buffer.getvalue(), format="png")
+
+
+from html.parser import HTMLParser
+from html import unescape
+
+
+class ContenidoHTML(HTMLParser):
+    """Extrae texto legible y metadatos sin ejecutar código de la página."""
+    def __init__(self):
+        super().__init__()
+        self.partes = []
+        self.imagen = None
+        self.omitir = 0
+
+    def handle_starttag(self, tag, attrs):
+        atributos = dict(attrs)
+        if tag in {"script", "style", "noscript"}:
+            self.omitir += 1
+        if tag in {"p", "div", "br", "h1", "h2", "h3", "li", "blockquote"}:
+            self.partes.append("\n\n")
+        if tag == "meta" and (atributos.get("property") or atributos.get("name")) in {"og:image", "twitter:image"}:
+            self.imagen = atributos.get("content") or self.imagen
+        if tag == "img":
+            self.imagen = self.imagen or atributos.get("src") or atributos.get("data-src")
+
+    def handle_endtag(self, tag):
+        if tag in {"script", "style", "noscript"}:
+            self.omitir = max(0, self.omitir - 1)
+        if tag in {"p", "div", "h1", "h2", "h3", "li", "blockquote"}:
+            self.partes.append("\n\n")
+
+    def handle_data(self, data):
+        if not self.omitir:
+            self.partes.append(data)
+
+    def texto(self):
+        return "\n\n".join(
+            re.sub(r"\s+", " ", bloque).strip()
+            for bloque in "".join(self.partes).split("\n\n") if bloque.strip()
+        )
+
+
+contenido_feed = {}
+
+
+def guardar_contenido_feed(link, elemento):
+    bloques = []
+    for hijo in elemento:
+        if hijo.tag.split("}")[-1] in {"encoded", "content", "description", "summary"}:
+            bloques.append("".join(hijo.itertext()))
+    html = max(bloques, key=len, default="")
+    if html:
+        contenido_feed[link] = html
+    parser = ContenidoHTML()
+    parser.feed(html)
+    return parser.imagen
+
+
+def texto_articulo(html):
+    # BeautifulSoup permite acotar el texto al cuerpo editorial.
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        for nodo in soup.select("script, style, noscript, nav, header, footer, aside, form"):
+            nodo.decompose()
+        cuerpo = soup.select_one('[itemprop="articleBody"]') or soup.find("article") or soup.find("main")
+        if cuerpo is None:
+            return ""
+        bloques = [n.get_text(" ", strip=True) for n in cuerpo.select("p, h2, h3, li, blockquote")]
+        return "\n\n".join(b for b in bloques if b)
+    except ImportError:
+        return ""
 
 
 # ============================================================
@@ -32,9 +111,11 @@ ARTICULOS_POR_SITIO = 3
 
 MINUTOS_ENTRE_ACTUALIZACIONES = 30
 
-ANCHO_LECTURA = 420
+ANCHO_MENU = 280
 
-ANCHO_ADMIN = 640
+ANCHO_LECTURA = 420 + ANCHO_MENU
+
+ANCHO_ADMIN = 640 + ANCHO_MENU
 
 LOGO_PATHS = [
     os.path.expanduser("~/.config/noticias/assets/minimalfeedlogo.png"),
@@ -213,7 +294,7 @@ def cargar_logo_app(nombre_tema=None, tamano=LOGO_SIZE):
                     # dentados que algunos gestores muestran con PNG semitransparente.
                     fondo = Image.new("RGBA", imagen.size, "#111315")
                     fondo.alpha_composite(imagen)
-                    logo_imagen = ImageTk.PhotoImage(fondo.convert("RGB"))
+                    logo_imagen = foto_tk(fondo.convert("RGB"))
                     return logo_imagen
             except Exception:
                 pass
@@ -249,7 +330,7 @@ def cargar_logo_idioma(tamano=(22, 22)):
             if PIL_DISPONIBLE:
                 imagen = Image.open(ruta).convert("RGBA")
                 imagen = ImageOps.contain(imagen, tamano, method=Image.Resampling.LANCZOS)
-                logo_idioma_imagen = ImageTk.PhotoImage(imagen)
+                logo_idioma_imagen = foto_tk(imagen)
             else:
                 logo_idioma_imagen = tk.PhotoImage(file=ruta)
             return logo_idioma_imagen
@@ -547,7 +628,8 @@ def parsear_feed(datos, maximo=ARTICULOS_POR_SITIO):
             )
 
             fecha = fecha_el.text.strip() if fecha_el is not None and fecha_el.text else ""
-            articulos.append((titulo, link, extraer_imagen_rss(item), fecha))
+            imagen_contenido = guardar_contenido_feed(link, item)
+            articulos.append((titulo, link, extraer_imagen_rss(item) or imagen_contenido, fecha))
 
         return articulos
 
@@ -571,7 +653,8 @@ def parsear_feed(datos, maximo=ARTICULOS_POR_SITIO):
 
         link = link_el.get("href") if link_el is not None else ""
         fecha = fecha_el.text.strip() if fecha_el is not None and fecha_el.text else ""
-        articulos.append((titulo, link, extraer_imagen_atom(entrada), fecha))
+        imagen_contenido = guardar_contenido_feed(link, entrada)
+        articulos.append((titulo, link, extraer_imagen_atom(entrada) or imagen_contenido, fecha))
 
     return articulos
 
@@ -601,15 +684,10 @@ def obtener_imagen_og(link):
 
         html = descargar(link, timeout=8).decode("utf-8", errors="ignore")
 
-        patrones = [
-            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
-        ]
-
-        for patron in patrones:
-            coincidencia = re.search(patron, html, re.IGNORECASE)
-            if coincidencia:
-                return urllib.parse.urljoin(link, coincidencia.group(1))
+        parser = ContenidoHTML()
+        parser.feed(html)
+        if parser.imagen:
+            return urllib.parse.urljoin(link, unescape(parser.imagen))
 
     except Exception:
         pass
@@ -692,7 +770,7 @@ iconos_botones_cache = {}  # cache para iconos SVG convertidos
 def dibujar_icono_simple(tipo, color="#d4d9de", tamano=18):
     """Dibuja iconos simples usando PIL sin dependencias externas"""
     try:
-        from PIL import Image, ImageTk, ImageDraw
+        from PIL import Image, ImageDraw
     except ImportError:
         return None
     
@@ -740,7 +818,7 @@ def dibujar_icono_simple(tipo, color="#d4d9de", tamano=18):
             draw.line([tamano-6, centro-3, tamano-2, centro], fill=color_rgb, width=grosor)
             draw.line([tamano-6, centro+3, tamano-2, centro], fill=color_rgb, width=grosor)
         
-        foto = ImageTk.PhotoImage(imagen)
+        foto = foto_tk(imagen)
         iconos_botones_cache[cache_key] = foto
         return foto
         
@@ -844,7 +922,7 @@ def obtener_imagen_favicon(sitio_actual):
         if PIL_DISPONIBLE:
             imagen = Image.open(ruta).convert("RGBA")
             imagen.thumbnail((TAMANO_FAVICON, TAMANO_FAVICON), Image.Resampling.LANCZOS)
-            foto = ImageTk.PhotoImage(imagen)
+            foto = foto_tk(imagen)
         else:
             foto = tk.PhotoImage(file=ruta)
 
@@ -876,7 +954,7 @@ def cargar_miniatura(imagen_bytes, tamano=None):
             imagen = Image.open(io.BytesIO(imagen_bytes)).convert("RGB")
             ancho_original, alto_original = imagen.size
             imagen.thumbnail((target, target), Image.Resampling.LANCZOS)
-            foto = ImageTk.PhotoImage(imagen)
+            foto = foto_tk(imagen)
         else:
             foto = tk.PhotoImage(data=imagen_bytes)
             ancho_original = foto.width()
@@ -906,7 +984,7 @@ def cargar_miniatura_cubierta(imagen_bytes, ancho, alto):
         izquierda = (ancho_redimensionado - destino_ancho) // 2
         arriba = (alto_redimensionado - destino_alto) // 2
         cubierta = imagen.crop((izquierda, arriba, izquierda + destino_ancho, arriba + destino_alto))
-        foto = ImageTk.PhotoImage(cubierta)
+        foto = foto_tk(cubierta)
         referencias_imagenes_articulos.append(foto)
         return foto
     except Exception as error:
@@ -1128,7 +1206,8 @@ ventana.attributes("-topmost", True)
 
 ventana.configure(bg="#0c0d10")
 
-ventana.geometry(f"{ancho_actual}x400")
+ventana.geometry(f"{ancho_actual}x500")
+ventana.minsize(ANCHO_LECTURA, 400)
 
 
 carcasa = tk.Frame(
@@ -1156,9 +1235,10 @@ def ajustar_alto_auto():
 
     max_alto_ventana = int(pantalla_alto * FRACCION_ALTO_MAXIMO)
 
-    chrome = 24 + 8 + 16 + 4 + pie_estado.winfo_reqheight() + 8
+    chrome = cabecera.winfo_reqheight() + 36
 
-    deseado_total = contenido_alto + chrome
+    # El panel conserva un alto útil incluso al mostrar una fuente vacía.
+    deseado_total = max(320, contenido_alto + 20) + chrome
 
     if deseado_total <= max_alto_ventana:
 
@@ -1175,7 +1255,9 @@ def ajustar_alto_auto():
     x = ventana.winfo_x()
     y = ventana.winfo_y()
 
-    ventana.geometry(f"{ancho_actual}x{alto_final}+{x}+{y}")
+    if not fullscreen:
+        ancho_ventana = max(ancho_actual, ventana.winfo_width())
+        ventana.geometry(f"{ancho_ventana}x{alto_final}+{x}+{y}")
 
     ventana.update_idletasks()
 
@@ -1254,60 +1336,67 @@ def alternar_fullscreen(event=None):
 
 
 
-barra_pie = tk.Frame(carcasa, bg="#111315")
-barra_pie.pack(side="bottom", fill="x", padx=10, pady=(0, 8))
+# Dos columnas: navegación lateral y área de lectura independiente.
+cuerpo_principal = tk.Frame(carcasa, bg="#111315")
+cuerpo_principal.pack(fill="both", expand=True)
+area_lectura = tk.Frame(cuerpo_principal, bg="#111315")
+area_lectura.pack(side="left", fill="both", expand=True)
 
-contenedor_botones = tk.Frame(barra_pie, bg="#111315")
-contenedor_botones.pack(anchor="center")
+menu_lateral = tk.Frame(cuerpo_principal, bg="#191d23", width=ANCHO_MENU,
+                       highlightthickness=0)
+menu_lateral.pack(side="left", fill="y", before=area_lectura)
+menu_lateral.pack_propagate(False)
+
+barra_opciones = tk.Frame(menu_lateral, bg="#191d23")
+barra_opciones.pack(fill="x", padx=12, pady=(16, 12))
+
+contenedor_botones = tk.Frame(barra_opciones, bg="#191d23")
+contenedor_botones.pack(fill="x")
 
 actualizar_btn = tk.Label(
     contenedor_botones, text="", font=("Inter", 9),
-    fg="#d4d9de", bg="#111315", cursor="hand2",
-    padx=12, pady=6, borderwidth=0, relief="flat"
+    fg="#d4d9de", bg="#191d23", cursor="hand2",
+    anchor="w", padx=12, pady=10, borderwidth=0, relief="flat"
 )
-actualizar_btn.pack(side="left", padx=(0, 8))
+actualizar_btn.pack(fill="x", pady=2)
 actualizar_btn.bind("<Enter>", lambda event: actualizar_btn.config(fg="#ffffff"))
 actualizar_btn.bind("<Leave>", lambda event: actualizar_btn.config(fg="#d4d9de"))
 
-# Separador y botones de navegación inferiores
-tk.Label(
-    contenedor_botones, text="-", font=("Inter", 8),
-    fg="#4b5158", bg="#111315"
-).pack(side="left", padx=2)
-
 btn_principal = tk.Label(
     contenedor_botones, text="Feed", font=("Inter", 8),
-    fg="#d4d9de", bg="#111315", cursor="hand2",
-    padx=10, pady=6, borderwidth=0, relief="flat"
+    fg="#d4d9de", bg="#191d23", cursor="hand2",
+    anchor="w", padx=12, pady=10, borderwidth=0, relief="flat"
 )
-btn_principal.pack(side="left", padx=2)
+btn_principal.pack(fill="x", pady=2)
 btn_principal.bind("<Enter>", lambda event: btn_principal.config(fg=paleta["base_fuerte"]))
 btn_principal.bind("<Leave>", lambda event: actualizar_color_btn_principal(btn_principal, "feed"))
 btn_principal.bind("<Button-1>", lambda event: ir_a_principal())
 
-tk.Label(contenedor_botones, text="-", font=("Inter", 8), fg="#4b5158", bg="#111315").pack(side="left", padx=2)
 
 btn_diseño = tk.Label(
     contenedor_botones, text="", font=("Inter", 14),
-    fg="#d4d9de", bg="#111315", cursor="hand2",
-    padx=10, pady=6, borderwidth=0, relief="flat"
+    fg="#d4d9de", bg="#191d23", cursor="hand2",
+    anchor="w", padx=12, pady=10, borderwidth=0, relief="flat"
 )
-btn_diseño.pack(side="left", padx=2)
+btn_diseño.pack(fill="x", pady=2)
 btn_diseño.bind("<Enter>", lambda event: btn_diseño.config(fg=paleta["base_fuerte"]))
 btn_diseño.bind("<Leave>", lambda event: actualizar_color_btn_principal(btn_diseño, "diseño"))
 btn_diseño.bind("<Button-1>", lambda event: ir_a_diseño())
 
-tk.Label(contenedor_botones, text="-", font=("Inter", 8), fg="#4b5158", bg="#111315").pack(side="left", padx=2)
 
 btn_categorias = tk.Label(
     contenedor_botones, text="", font=("Inter", 14),
-    fg="#d4d9de", bg="#111315", cursor="hand2",
-    padx=10, pady=6, borderwidth=0, relief="flat"
+    fg="#d4d9de", bg="#191d23", cursor="hand2",
+    anchor="w", padx=12, pady=10, borderwidth=0, relief="flat"
 )
-btn_categorias.pack(side="left", padx=2)
+btn_categorias.pack(fill="x", pady=2)
 btn_categorias.bind("<Enter>", lambda event: btn_categorias.config(fg=paleta["base_fuerte"]))
 btn_categorias.bind("<Leave>", lambda event: actualizar_color_btn_principal(btn_categorias, "categorias"))
 btn_categorias.bind("<Button-1>", lambda event: ir_a_categorias())
+
+for boton_opcion in (actualizar_btn, btn_principal, btn_diseño, btn_categorias):
+    boton_opcion.bind("<Enter>", lambda event: event.widget.config(bg="#2b323c"), add="+")
+    boton_opcion.bind("<Leave>", lambda event: event.widget.config(bg="#191d23"), add="+")
 
 def actualizar_icono_btn(tipo, color):
     """Actualiza el icono de un botón con el color especificado"""
@@ -1328,7 +1417,7 @@ def actualizar_icono_btn(tipo, color):
 
 
 def cargar_iconos_botones():
-    """Muestra texto compacto en la navegación inferior."""
+    """Muestra las opciones de navegación en la barra lateral."""
     actualizar_btn.config(text="Actualizar feed", font=("Inter", 8))
     btn_principal.config(text="Feed", font=("Inter", 8))
     btn_diseño.config(text="Diseño", font=("Inter", 8))
@@ -1428,7 +1517,7 @@ for widget in [cabecera] + ([titulo_cabecera] if titulo_cabecera is not None els
 
 FRACCION_ALTO_MAXIMO = 0.8  # nunca ocupa más del 80% de la pantalla
 
-area_desplazable = tk.Frame(carcasa, bg="#111315")
+area_desplazable = tk.Frame(area_lectura, bg="#111315")
 
 area_desplazable.pack(fill="both", expand=True)
 
@@ -1459,22 +1548,25 @@ canvas.bind("<Configure>", _sincronizar_ancho_contenido)
 
 
 def _rueda_arriba(event):
-    canvas.yview_scroll(-3, "units")
+    canvas_rueda(event).yview_scroll(-3, "units")
 
 
 def _rueda_abajo(event):
-    canvas.yview_scroll(3, "units")
+    canvas_rueda(event).yview_scroll(3, "units")
+
+
+def canvas_rueda(event):
+    widget = event.widget
+    while widget is not None:
+        if widget is menu_lateral:
+            return canvas_menu
+        widget = getattr(widget, "master", None)
+    return canvas
 
 
 canvas.bind_all("<Button-4>", _rueda_arriba)
 canvas.bind_all("<Button-5>", _rueda_abajo)
 
-pie_estado = tk.Label(
-    carcasa, text="Cargando…", font=("Sans", 7),
-    fg="#7a8592", bg="#111315"
-)
-
-pie_estado.pack(side="bottom", anchor="w", padx=10, pady=(0, 8))
 
 
 def limpiar_contenido():
@@ -1498,6 +1590,9 @@ expandido_sitio = {}
 vista_actual = "categorias"
 
 categoria_activa = None
+
+fuente_activa = None
+categorias_menu_expandidas = set()
 
 filtro_principal = "todo"
 
@@ -1901,7 +1996,7 @@ def articulos_combinados_ver_todo():
     return salida
 
 
-def articulos_combinados_categoria(nombre_categoria):
+def articulos_combinados_categoria(nombre_categoria, url_fuente=None):
     categoria = next((c for c in config.get("categorias", []) if c.get("nombre") == nombre_categoria), None)
     if categoria is None:
         return []
@@ -1909,6 +2004,8 @@ def articulos_combinados_categoria(nombre_categoria):
     salida = []
 
     for sitio_actual in categoria.get("sitios", []):
+        if url_fuente is not None and sitio_actual.get("url") != url_fuente:
+            continue
         url_sitio = sitio_actual.get("url")
         lista = datos_articulos.get(url_sitio) or []
         nombre_sitio = sitio_actual.get("nombre", "Fuente")
@@ -1945,9 +2042,9 @@ def articulos_combinados_categoria(nombre_categoria):
 
 def ancho_usable_actual():
     try:
-        return max(420, ventana.winfo_width() - 80)
+        return max(200, canvas.winfo_width())
     except Exception:
-        return max(420, ancho_actual)
+        return max(200, ancho_actual - ANCHO_MENU - 24)
 
 
 def total_no_leidos_global():
@@ -2138,7 +2235,8 @@ def seleccionar_categoria(nombre_cat):
 
 
 def seleccionar_filtro(nombre_filtro):
-    global categoria_activa, vista_actual, filtro_principal
+    global categoria_activa, vista_actual, filtro_principal, fuente_activa
+    fuente_activa = None
     if nombre_filtro == "todo":
         categoria_activa = None
         vista_actual = "categorias"
@@ -2148,6 +2246,142 @@ def seleccionar_filtro(nombre_filtro):
         vista_actual = "categoria"
         filtro_principal = nombre_filtro
     refrescar_vista_con_carga(lambda: refrescar_vista())
+
+
+def alternar_categoria_menu(nombre):
+    if nombre in categorias_menu_expandidas:
+        categorias_menu_expandidas.remove(nombre)
+    else:
+        categorias_menu_expandidas.add(nombre)
+    refrescar_menu_lateral()
+
+
+def navegar_menu(nombre=None, url=None):
+    global modo_admin, categoria_activa, fuente_activa, vista_actual, filtro_principal
+    modo_admin = False
+    categoria_activa = nombre
+    fuente_activa = url
+    vista_actual = "fuente" if url else ("categoria" if nombre else "categorias")
+    filtro_principal = nombre if nombre is not None else "todo"
+    actualizar_estado_botones_inferiores()
+    canvas.yview_moveto(0)
+    vista_lectura()
+
+
+def refrescar_menu_lateral():
+    posicion = canvas_menu.yview()[0]
+    for widget in contenido_menu.winfo_children():
+        widget.destroy()
+
+    def opcion(texto, comando, activa=False, sangria=0, indicador=None, cantidad=None):
+        activa = activa and not modo_admin
+        fondo = "#242a32" if activa else "#191d23"
+        fila = tk.Frame(contenido_menu, bg=fondo, cursor="hand2", takefocus=True,
+                        highlightthickness=1, highlightbackground=fondo,
+                        highlightcolor=paleta["base"])
+        fila.pack(fill="x", padx=(12 + sangria, 12), pady=2)
+        marca = tk.Frame(fila, width=2, bg=paleta["base"] if activa else fondo)
+        marca.pack(side="left", fill="y", pady=9)
+        elementos = []
+        if indicador:
+            icono = tk.Label(fila, text=indicador, font=("Sans", 10),
+                            fg=paleta["base_fuerte"] if activa else "#7f8997", bg=fondo)
+            icono.pack(side="left", padx=(9, 0))
+            elementos.append(icono)
+        if cantidad is not None:
+            contador = tk.Label(fila, text=str(cantidad), font=("Sans", 8),
+                               fg="#8793a3", bg=fondo)
+            contador.pack(side="right", padx=(6, 10))
+            elementos.append(contador)
+        etiqueta = tk.Label(
+            fila, text=texto, anchor="w", justify="left",
+            font=("Sans", 9, "normal" if sangria else "bold"),
+            fg=paleta["base_fuerte"] if activa else ("#aab4c1" if sangria else "#e0e6ee"),
+            bg=fondo, pady=10 if not sangria else 8,
+        )
+        etiqueta.pack(side="left", fill="x", expand=True, padx=(10, 8))
+        etiqueta.bind("<Configure>", lambda e: etiqueta.config(wraplength=max(40, e.width)))
+        elementos.append(etiqueta)
+
+        def resaltar(encima):
+            color = "#2b323c" if encima else fondo
+            fila.config(bg=color, highlightbackground=color)
+            for elemento in elementos:
+                elemento.config(bg=color)
+            if not activa:
+                marca.config(bg=color)
+
+        def salir(event):
+            x, y = fila.winfo_pointerxy()
+            if not (fila.winfo_rootx() <= x < fila.winfo_rootx() + fila.winfo_width()
+                    and fila.winfo_rooty() <= y < fila.winfo_rooty() + fila.winfo_height()):
+                resaltar(False)
+
+        for widget in (fila, marca, *elementos):
+            widget.bind("<Enter>", lambda e: resaltar(True))
+            widget.bind("<Leave>", salir)
+            widget.bind("<Button-1>", lambda e: comando())
+        fila.bind("<Return>", lambda e: comando())
+        fila.bind("<space>", lambda e: comando())
+
+    opcion("Todo el feed", navegar_menu, categoria_activa is None, indicador="≡")
+    tk.Frame(contenido_menu, bg="#2b313a", height=1).pack(fill="x", padx=22, pady=(12, 16))
+    tk.Label(contenido_menu, text="TUS CATEGORÍAS", font=("Sans", 7, "bold"),
+             fg="#788596", bg="#191d23").pack(anchor="w", padx=24, pady=(0, 8))
+    for categoria in config["categorias"]:
+        nombre = categoria["nombre"]
+        abierta = nombre in categorias_menu_expandidas
+        opcion(nombre, lambda n=nombre: alternar_categoria_menu(n),
+               categoria_activa == nombre, indicador="⌄" if abierta else "›",
+               cantidad=len(categoria.get("sitios", [])))
+        if abierta:
+            opcion("Todas las fuentes", lambda n=nombre: navegar_menu(n),
+                   categoria_activa == nombre and fuente_activa is None, 20)
+            for fuente in categoria.get("sitios", []):
+                url = fuente["url"]
+                opcion(fuente["nombre"], lambda n=nombre, u=url: navegar_menu(n, u),
+                       categoria_activa == nombre and fuente_activa == url, 20)
+            if not categoria.get("sitios"):
+                tk.Label(contenido_menu, text="Aún no hay fuentes", bg="#191d23",
+                         fg="#788596", font=("Sans", 8)).pack(anchor="w", padx=44, pady=8)
+            tk.Frame(contenido_menu, bg="#191d23", height=6).pack()
+    contenido_menu.update_idletasks()
+    canvas_menu.configure(scrollregion=canvas_menu.bbox("all"))
+    canvas_menu.yview_moveto(posicion)
+
+
+# Estado fijo al pie: permanece visible aunque se desplacen las categorías.
+pie_menu = tk.Frame(menu_lateral, bg="#191d23")
+pie_menu.pack(side="bottom", fill="x")
+tk.Frame(pie_menu, bg="#2b313a", height=1).pack(fill="x", padx=22)
+pie_estado = tk.Label(
+    pie_menu, text="Cargando…", font=("Sans", 7),
+    fg="#8793a3", bg="#191d23", anchor="w", justify="left",
+    wraplength=ANCHO_MENU - 44,
+)
+pie_estado.pack(fill="x", padx=22, pady=14)
+
+tk.Frame(menu_lateral, bg="#2b313a", height=1).pack(fill="x", padx=22, pady=(0, 12))
+canvas_menu = tk.Canvas(menu_lateral, bg="#191d23", highlightthickness=0, width=290)
+scroll_menu = tk.Scrollbar(
+    menu_lateral, orient="vertical", command=canvas_menu.yview, width=6,
+    bg="#3b4552", activebackground="#576476", troughcolor="#191d23",
+    relief="flat", bd=0, highlightthickness=0,
+)
+canvas_menu.pack(side="left", fill="both", expand=True, pady=(0, 14))
+
+def actualizar_scroll_menu(inicio, fin):
+    scroll_menu.set(inicio, fin)
+    if float(inicio) <= 0 and float(fin) >= 1:
+        scroll_menu.pack_forget()
+    elif not scroll_menu.winfo_manager():
+        scroll_menu.pack(side="right", fill="y", before=canvas_menu, pady=(0, 14))
+
+canvas_menu.configure(yscrollcommand=actualizar_scroll_menu)
+contenido_menu = tk.Frame(canvas_menu, bg="#191d23")
+contenido_menu_id = canvas_menu.create_window((0, 0), window=contenido_menu, anchor="nw")
+canvas_menu.bind("<Configure>", lambda event: canvas_menu.itemconfigure(contenido_menu_id, width=event.width))
+contenido_menu.bind("<Configure>", lambda event: canvas_menu.configure(scrollregion=canvas_menu.bbox("all")))
 
 
 def volver_a_categorias():
@@ -2467,25 +2701,77 @@ def vista_lectura_legacy():
 tarjeta_hover_actual = None
 
 
-def _abrir_articulo(link):
-    """Abre un artículo desde cualquier punto de su tarjeta."""
-    if link:
-        webbrowser.open(link)
-        marcar_visto_y_redibujar(link)
+def _abrir_articulo(link, articulo=None):
+    if not link:
+        return
+    articulo = articulo or {}
+    lector = tk.Toplevel(ventana)
+    lector.title(articulo.get("titulo", "Lectura"))
+    lector.configure(bg="#171b20")
+    lector.geometry("720x700")
+    lector.bind("<Escape>", lambda event: lector.destroy())
+    cabecera_lector = tk.Frame(lector, bg="#171b20")
+    cabecera_lector.pack(fill="x", padx=24, pady=18)
+    tk.Button(cabecera_lector, text="← Cerrar lectura", command=lector.destroy,
+              bg="#171b20", fg="#d4d9de", relief="flat").pack(side="left")
+    tk.Button(cabecera_lector, text="Abrir original ↗", command=lambda: webbrowser.open(link),
+              bg="#171b20", fg=paleta["base_fuerte"], relief="flat").pack(side="right")
+    from tkinter.scrolledtext import ScrolledText
+    texto = ScrolledText(lector, wrap="word", font=("Sans", 11), bg="#171b20",
+                         fg="#dbe1e9", insertbackground="#dbe1e9", relief="flat",
+                         padx=24, pady=16, spacing3=10)
+    texto.pack(fill="both", expand=True)
+    texto.tag_configure("titulo", font=("Sans", 18, "bold"), spacing3=18)
+    texto.tag_configure("estado", foreground="#8793a3", font=("Sans", 9))
+    titulo = articulo.get("titulo", "Artículo")
+
+    def mostrar(cuerpo, estado):
+        if not lector.winfo_exists():
+            return
+        texto.configure(state="normal")
+        texto.delete("1.0", "end")
+        texto.insert("end", titulo + "\n\n", "titulo")
+        texto.insert("end", estado + "\n\n", "estado")
+        texto.insert("end", cuerpo)
+        texto.configure(state="disabled")
+
+    mostrar("", "Cargando artículo…")
+    vistos.add(link)
+    config["vistos"] = list(vistos)
+    guardar_config()
+    refrescar_vista_debounced()
+
+    def cargar():
+        cuerpo = ""
+        try:
+            html = descargar(link, timeout=15).decode("utf-8", errors="replace")
+            cuerpo = texto_articulo(html)
+        except Exception:
+            pass
+        estado = articulo.get("fuente", "") + " · Texto extraído del sitio"
+        if not cuerpo:
+            parser = ContenidoHTML()
+            parser.feed(contenido_feed.get(link, ""))
+            cuerpo = parser.texto()
+            estado = "Contenido del feed · Puede ser un resumen del artículo"
+        if not cuerpo:
+            cuerpo = "No se pudo recuperar el texto. Puedes consultar el artículo con «Abrir original»."
+            estado = "Contenido no disponible"
+        try:
+            ventana.after(0, lambda: mostrar(cuerpo, estado))
+        except (tk.TclError, RuntimeError):
+            pass
+
+    threading.Thread(target=cargar, daemon=True).start()
 
 
 def crear_tarjeta_articulo(padre, articulo, fila, columna, ancho, estilo):
-    """Crea una tarjeta estática: borde, fuente, título y traducción.
-
-    La geometría queda fijada una vez. El único estado visual modificable es
-    el color de fondo del marco exterior de un píxel.
-    """
+    """Portada permanente arriba y texto completo debajo."""
     link = articulo.get("link", "")
     ya_visto = link in vistos
-    alto = estilo["alto"]
+    alto_imagen = estilo["miniatura"]
+    alto = estilo["alto"] + alto_imagen
 
-    # El marco exterior ES el borde. No se usan highlight, Canvas, imágenes
-    # temporales, after(), ni cambios de tamaño durante el hover.
     tarjeta = tk.Frame(padre, bg="#2a2a2a", width=ancho, height=alto)
     tarjeta.grid(row=fila, column=columna, sticky="nsew", padx=4, pady=4)
     tarjeta.grid_propagate(False)
@@ -2495,6 +2781,18 @@ def crear_tarjeta_articulo(padre, articulo, fila, columna, ancho, estilo):
     interior = tk.Frame(tarjeta, bg="#171717")
     interior.pack(fill="both", expand=True, padx=1, pady=1)
     interior.pack_propagate(False)
+
+    portada = tk.Frame(interior, bg="#222831", height=alto_imagen)
+    portada.pack(fill="x")
+    portada.pack_propagate(False)
+    imagen = cargar_miniatura_cubierta(articulo.get("imagen"), ancho - 2, alto_imagen)
+    if imagen is not None:
+        etiqueta_portada = tk.Label(portada, image=imagen, bg="#222831", bd=0)
+        etiqueta_portada.image = imagen
+        etiqueta_portada.pack(fill="both", expand=True)
+    else:
+        tk.Label(portada, text="Imagen no disponible", font=("Sans", 8),
+                 fg="#8793a3", bg="#222831").pack(expand=True)
 
     cuerpo = tk.Frame(interior, bg="#171717")
     cuerpo.pack(fill="both", expand=True, padx=8, pady=8)
@@ -2527,7 +2825,7 @@ def crear_tarjeta_articulo(padre, articulo, fila, columna, ancho, estilo):
     color_titulo = "#707070" if ya_visto else paleta["link"]
     tk.Label(
         cuerpo,
-        text="•  " + articulo.get("titulo", ""),
+        text=articulo.get("titulo", ""),
         font=("Sans", estilo["titulo"]),
         fg=color_titulo,
         bg="#171717",
@@ -2538,20 +2836,29 @@ def crear_tarjeta_articulo(padre, articulo, fila, columna, ancho, estilo):
 
     titulo_es = articulo.get("titulo_es")
     if titulo_es and articulo.get("traducir_es", False):
+        traduccion = tk.Frame(cuerpo, bg="#171717")
+        traduccion.pack(fill="x", pady=(10, 0))
+        # Bandera circular dibujada en Tk: no depende del emoji del sistema.
+        bandera = tk.Canvas(traduccion, width=16, height=16, bg="#171717",
+                            highlightthickness=0, bd=0)
+        bandera.pack(side="left", anchor="n", padx=(0, 6), pady=2)
+        for y in range(16):
+            semiancho = (64 - (y + 0.5 - 8) ** 2) ** 0.5
+            color = "#f6c645" if 4 <= y < 12 else "#c9293b"
+            bandera.create_line(8 - semiancho, y, 8 + semiancho, y, fill=color)
+        bandera.create_rectangle(5, 6, 7, 10, fill="#b74a43", outline="")
         tk.Label(
-            cuerpo,
-            text="   " + titulo_es,
-            font=("Sans", estilo["traducido"]),
-            fg="#707070" if ya_visto else "#aaaaaa",
-            bg="#171717",
-            justify="left",
-            anchor="nw",
-            wraplength=ancho_texto
-        ).pack(anchor="w", fill="x", pady=(3, 0))
+            traduccion, text=titulo_es, font=("Sans", estilo["traducido"]),
+            fg="#707070" if ya_visto else "#b5bcc6", bg="#171717",
+            justify="left", anchor="nw", wraplength=ancho_texto - 22,
+        ).pack(side="left", fill="x", expand=True)
+
+    cuerpo.update_idletasks()
+    tarjeta.configure(height=alto_imagen + cuerpo.winfo_reqheight() + 18)
 
     def enlazar_click(widget):
         widget.configure(cursor="hand2")
-        widget.bind("<Button-1>", lambda event: (_abrir_articulo(link), "break")[1], add="+")
+        widget.bind("<Button-1>", lambda event: (_abrir_articulo(link, articulo), "break")[1], add="+")
         for hijo in widget.winfo_children():
             enlazar_click(hijo)
 
@@ -2663,24 +2970,25 @@ def vista_lectura():
     """Vista de lectura basada únicamente en el nuevo renderizador de tarjetas."""
     posicion_scroll = canvas.yview()[0]
     limpiar_contenido()
+    referencias_imagenes_articulos.clear()
 
-    barra_filtros = tk.Frame(contenido, bg="#111315")
-    barra_filtros.pack(fill="x", pady=(0, 8))
-    selector = tk.Frame(barra_filtros, bg="#111315")
-    selector.pack(anchor="center")
-    for indice, nombre_filtro in enumerate(["todo"] + [c["nombre"] for c in config["categorias"]]):
-        activo = filtro_principal == nombre_filtro
-        if indice:
-            tk.Label(selector, text="|", fg="#4b5158", bg="#111315", font=("Sans", 8, "bold")).pack(side="left", padx=(0, 8))
-        etiqueta = tk.Label(
-            selector, text="Ver todo" if nombre_filtro == "todo" else nombre_filtro,
-            fg=paleta["base_fuerte"] if activo else "#7c838b", bg="#111315",
-            font=("Sans", 8, "bold"), cursor="hand2"
-        )
-        etiqueta.pack(side="left")
-        etiqueta.bind("<Button-1>", lambda event, n=nombre_filtro: seleccionar_filtro(n))
+    refrescar_menu_lateral()
 
-    if vista_actual == "categoria" and categoria_activa:
+    if vista_actual == "fuente" and categoria_activa:
+        categoria = next((c for c in config["categorias"] if c["nombre"] == categoria_activa), None)
+        fuente = next((f for f in categoria.get("sitios", []) if f["url"] == fuente_activa), None) if categoria else None
+        if fuente is None:
+            navegar_menu()
+            return
+        tk.Label(contenido, text=fuente["nombre"], font=("Sans", 10, "bold"),
+                 fg=paleta["base_fuerte"], bg="#111315").pack(anchor="w", pady=(4, 8))
+        mostrar_fuentes_sin_feed({"sitios": [fuente]})
+        if datos_articulos.get(fuente_activa) == "cargando":
+            tk.Label(contenido, text="Cargando artículos…", fg="#8b9198",
+                     bg="#111315", font=("Sans", 9)).pack(pady=12)
+        else:
+            mostrar_articulos_en_tarjetas(articulos_combinados_categoria(categoria_activa, fuente_activa))
+    elif vista_actual == "categoria" and categoria_activa:
         categoria = next((c for c in config["categorias"] if c.get("nombre") == categoria_activa), None)
         tk.Label(
             contenido, text=categoria_activa, font=("Sans", 10, "bold"),
@@ -2772,13 +3080,29 @@ def actualizar_sitios_en_segundo_plano(lista_de_sitios):
 
                 imagen_bytes = None
 
-                # Las portadas están desactivadas: evita descargas, canvas y
-                # cualquier efecto visual asociado a imágenes de artículos.
-                imagen_bytes = None
+                # La portada forma parte de todas las tarjetas, independientemente
+                # de la antigua preferencia de miniaturas de cada fuente.
+                candidatos = [urllib.parse.urljoin(link, imagen_url)] if imagen_url else []
+                for imagen_candidata in candidatos:
+                    try:
+                        imagen_bytes = descargar(unescape(imagen_candidata), timeout=8)
+                        if PIL_DISPONIBLE:
+                            with Image.open(io.BytesIO(imagen_bytes)) as prueba:
+                                prueba.verify()
+                    except Exception:
+                        imagen_bytes = None
+                if not imagen_bytes:
+                    imagen_og = obtener_imagen_og(link)
+                    if imagen_og:
+                        try:
+                            imagen_bytes = descargar(imagen_og, timeout=8)
+                        except Exception:
+                            pass
 
                 con_traduccion.append((titulo, link, traduccion, imagen_bytes, fecha_texto))
 
             datos_articulos[url_sitio] = con_traduccion
+            ventana.after(0, refrescar_vista_debounced)
             sitio_actual["ultima_actualizacion"] = time.time()
             hubo_cambio_en_config = True
 
@@ -3013,6 +3337,7 @@ def agregar_sitio(nombre_cat, entry_nombre, entry_url, etiqueta_estado):
 def vista_admin():
     global paleta, seccion_config
     paleta = tema_actual()
+    refrescar_menu_lateral()
 
     limpiar_contenido()
 
