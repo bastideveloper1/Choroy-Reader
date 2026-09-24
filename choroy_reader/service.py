@@ -12,11 +12,12 @@ import urllib.parse
 from html import unescape
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from PIL import Image
 from choroy_reader.library import Library, find_matches, score_radar
 from . import core
 from .reader_store import ReaderStore
+from .lifecycle import Lifecycle
 
 
 class Service:
@@ -33,13 +34,55 @@ class Service:
         self.config.setdefault('radar_palabras', [])
         self.library = Library(self.root / 'biblioteca')
         self.articles = {}
+        for article in self.library.list_items('feed'):
+            self.articles.setdefault(article.get('source_url', ''), []).append(article)
         self.content = {}
         self.reader_store = ReaderStore(self.root / "reader_state.sqlite3")
+        self.lifecycle = Lifecycle(self.reader_store)
         self.seen = set(self.config.get('vistos', []))
+        self.dismissed = set(self.config.get('descartados', []))
+        # Seed history from existing installations without touching saved copies.
+        for kind in ('feed', 'guardados', 'descargas', 'archivados'):
+            for article in self.library.list_items(kind):
+                if not self.library.contains('historial', article['link']):
+                    self.remember_article(article)
+
+        self.cleanup_history()
+
+    def cleanup_history(self, now=None):
+        now = time.time() if now is None else now
+        days = self.config.get('historial_dias', 0)
+        removed = 0
+        for article in self.library.list_items('historial'):
+            link = article['link']
+            first_seen, retired = self.lifecycle.remember(link, now)
+            protected = link not in self.seen or any(self.library.contains(kind, link) for kind in ('guardados', 'descargas', 'archivados'))
+            if days and not protected and now - first_seen >= days * 86400:
+                self.library.save('retirados', article)
+                self.lifecycle.retire(link, now)
+                self.library.delete('historial', link)
+                removed += 1
+        for article in self.library.list_items('retirados'):
+            link = article['link']
+            _, retired = self.lifecycle.remember(link, now)
+            protected = link not in self.seen or any(self.library.contains(kind, link) for kind in ('guardados', 'descargas', 'archivados'))
+            if protected:
+                self.restore_history(link, now)
+            elif retired is not None and now - retired >= 30 * 86400:
+                self.library.delete('retirados', link)
+        return removed
+
+    def restore_history(self, link, now=None):
+        article = self.library.read('retirados', link)
+        if article:
+            self.library.save('historial', article)
+            self.lifecycle.restore(link, time.time() if now is None else now)
+            self.library.delete('retirados', link)
 
     def save_config(self):
         self.root.mkdir(parents=True, exist_ok=True)
         self.config['vistos'] = sorted(self.seen)
+        self.config['descartados'] = sorted(self.dismissed)
         name = None
         try:
             with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=self.root, delete=False) as f:
@@ -138,28 +181,41 @@ class Service:
             source['sin_feed'] = True
             return source, []
         source['sin_feed'] = False
-        raw = core.get_articles(feed, maximum=source.get('max_articulos') or core.ARTICLES_PER_SOURCE)
+        raw = core.get_articles(feed, maximum=None)
         if raw is None:
             raise ValueError('No se pudo descargar el feed')
         output = []
-        for title, link, image, date in raw:
+        dated = [(title, link, image, core.parse_date(date)) for title, link, image, date in raw]
+        dated = [entry for entry in dated if self.in_period(entry[3], config)]
+        dated.sort(key=lambda entry: entry[3].timestamp(), reverse=True)
+        unique = {entry[1]: entry for entry in reversed(dated)}
+        dated = sorted(unique.values(), key=lambda entry: entry[3].timestamp(), reverse=True)
+        for title, link, image, date in dated[:source.get('limite_articulos', 100)]:
             translate = (config.get('mostrar_titulo_es', True) and source.get('modo_titulo', 'en_es') != 'solo_ingles'
                          and source.get('traduccion_es', True))
             translated = core.translate_text(title, skip_spanish=True) if translate else ''
             if translated and ' '.join(translated.casefold().split()) == ' '.join(title.casefold().split()):
                 translated = ''
             output.append(dict(titulo=title, titulo_es=translated or '', link=link,
-                               imagen=self.fetch_image(link, image), fecha=core.parse_date(date),
+                               imagen=self.fetch_image(link, image), fecha=date,
                                fuente=source['nombre'], source_url=source['url'], traducir_es=translate))
         return source, output
 
-    def refresh(self, progress=None):
+    def refresh(self, progress=None, cancel=None):
         config = copy.deepcopy(self.config)
         sources = {s['url']: s for c in config['categorias'] for s in c['sitios']}
         results, updated, errors = {}, {}, []
+        def fetch(source):
+            if cancel is not None and cancel.is_set():
+                return None
+            return self.fetch_source(source, config)
         with ThreadPoolExecutor(max_workers=6) as pool:
-            tasks = {pool.submit(self.fetch_source, s, config): url for url, s in sources.items()}
+            tasks = {pool.submit(fetch, s): url for url, s in sources.items()}
             for number, task in enumerate(as_completed(tasks), 1):
+                if cancel is not None and cancel.is_set():
+                    for pending in tasks:
+                        pending.cancel()
+                    break
                 url = tasks[task]
                 try:
                     source, articles = task.result()
@@ -170,9 +226,29 @@ class Service:
                     progress(number, len(tasks))
         return results, updated, errors
 
+    def remember_article(self, article):
+        # History is metadata, not an offline download or a duplicate image cache.
+        _, retired = self.lifecycle.remember(article['link'])
+        if retired is None:
+            self.library.save('historial', dict(article, cuerpo=None, imagen=None))
+
     def apply_refresh(self, result):
         articles, updated, errors = result
+        for batch in self.articles.values():
+            for article in batch:
+                if not self.library.contains('historial', article['link']):
+                    self.remember_article(article)
+        for batch in articles.values():
+            for article in batch:
+                self.remember_article(article)
         self.articles.update(articles)
+        # Each URL has one persistent snapshot, even when several feeds contain it.
+        current = {a['link']: a for a in self.all_articles()}
+        for article in current.values():
+            self.library.save('feed', article)
+        for article in self.library.list_items('feed'):
+            if article['link'] not in current:
+                self.library.delete('feed', article['link'])
         for category in self.config['categorias']:
             for source in category['sitios']:
                 if source['url'] in updated:
@@ -180,6 +256,7 @@ class Service:
                     source['sin_feed'] = updated[source['url']].get('sin_feed', False)
                     source['ultima_actualizacion'] = time.time()
         self.save_config()
+        self.cleanup_history()
         return errors
 
     def all_articles(self):
@@ -193,7 +270,7 @@ class Service:
         return sorted(articles.values(), key=lambda a: a['fecha'].timestamp() if a.get('fecha') else 0, reverse=True)
 
     def article(self, link):
-        return next((a for a in self.all_articles() if a['link'] == link), None) or self.library.read('descargas', link) or self.library.read('guardados', link)
+        return next((a for a in self.all_articles() if a['link'] == link), None) or self.library.read('descargas', link) or self.library.read('guardados', link) or self.library.read('archivados', link) or self.library.read('historial', link) or self.library.read('retirados', link)
 
     def read(self, article, offline=False):
         article = dict(article)
@@ -258,17 +335,36 @@ class Service:
         self.reader_store.save_translation(article['link'], original, translated)
         return translated
 
-    def score(self, article):
+    def score(self, article, details=False):
         text = article.get('cuerpo') or self.content.get(article['link'], {}).get('cuerpo', '')
         if not text:
             parser = core.HtmlContent()
             parser.feed(core.feed_content.get(article['link'], ''))
             text = parser.text()
         return score_radar(article.get('titulo', '') + ' ' + (article.get('titulo_es') or ''), text,
-                            self.config.get('radar_palabras', []))
+                            self.config.get('radar_palabras', []),
+                            self.config.get('radar_equivalencias', {}) if self.config.get('radar_bilingue') else None, details=details)
+
+    def in_period(self, date, config=None, now=None):
+        if not isinstance(date, datetime):
+            return False
+        config = self.config if config is None else config
+        now = now or datetime.now().astimezone()
+        date = date.astimezone()
+        period = config.get('periodo_articulos', 'hoy')
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        if period == 'semana':
+            start -= timedelta(days=6)
+        elif period == 'mes':
+            start -= timedelta(days=29)
+        elif period == 'ano':
+            start = start.replace(month=1, day=1)
+        return start <= date <= now
 
     def filtered(self, page='feed', category='', source='', query=''):
-        articles = self.library.list_items(page) if page in {'guardados', 'descargas'} else self.all_articles()
+        articles = self.library.list_items(page) if page in {'guardados', 'descargas', 'archivados', 'historial', 'retirados'} else self.all_articles()
+        if page == 'feed':
+            articles = [a for a in articles if self.in_period(a.get('fecha')) and not self.library.contains('archivados', a['link'])]
         if category:
             sources = {s['url'] for c in self.config['categorias'] if c['nombre'] == category for s in c['sitios']}
             articles = [a for a in articles if a.get('source_url') in sources]
@@ -278,4 +374,6 @@ class Service:
             articles = [a for a in articles if find_matches(a.get('titulo', '') + ' ' + (a.get('titulo_es') or ''), query)]
         if self.config.get('radar_activo'):
             articles.sort(key=self.score, reverse=True)
+        if page == "feed":
+            articles.sort(key=lambda article: (article["link"] in self.dismissed, article["link"] in self.seen))
         return articles

@@ -26,7 +26,9 @@ class Backend(QObject):
         self.page, self.category, self.source, self.query = 'feed', '', '', ''
         self.status = 'Listo'
         self.busy = False
+        self.refresh_cancel = threading.Event()
         self.radar_busy = False
+        self.radar_translating = set()
         self.reader = None
         self.reader_body = ''
         self.reader_status = ''
@@ -34,6 +36,9 @@ class Backend(QObject):
         self.translating = False
         self.downloads = set()
         self.bulk_busy = False
+        self.read_batch = set()
+        self.read_scope = ""
+        self.bulk_cancel = threading.Event()
         self._document_key = None
         self.reader_token = 0
         self.quote_token = 0
@@ -104,14 +109,17 @@ class Backend(QObject):
         source = next((src for cat in self.service.config['categorias'] for src in cat['sitios']
                        if src['url'] == article.get('source_url')), {})
         translate_enabled = source.get('traduccion_es', True) and source.get('modo_titulo', 'en_es') != 'solo_ingles'
-        distinct, count = self.service.score(article) if self.service.config.get('radar_activo') else (0, 0)
-        return dict(link=link, title=article.get('titulo', ''), title_html=self.title_html(article.get('titulo', '')),
+        distinct, count, detected = self.service.score(article, details=True) if self.service.config.get('radar_activo') else (0, 0, [])
+        progress = self.service.config.get('progreso_lectura', {}).get(link, {})
+        position = progress.get('es' if self.reader and self.reader['link'] == link and self.translated else 'original', {})
+        return dict(reading_progress=position, link=link, title=article.get('titulo', ''), title_html=self.title_html(article.get('titulo', '')),
                     translation=article.get('titulo_es') or '', translation_html=self.title_html(article.get('titulo_es') or ''),
                     show_translation=bool(self.service.config.get('mostrar_titulo_es', True) and translate_enabled and article.get('traducir_es')), source=article.get('fuente', ''),
                     image=self.service.image_url(article.get('imagen')), date=core.relative_date(article.get('fecha')),
                     saved=self.service.library.contains('guardados', link), downloaded=self.service.library.contains('descargas', link),
                     downloading=link in self.downloads, seen=link in self.service.seen,
-                    radar=min(3, distinct), interests=distinct, mentions=count)
+                    dismissed=link in self.service.dismissed, archived=self.service.library.contains('archivados', link),
+                    radar=min(3, distinct), interests=distinct, mentions=count, radar_detected=detected)
 
     def publish(self):
         cfg = self.service.config
@@ -120,8 +128,8 @@ class Backend(QObject):
         for ci, cat in enumerate(cfg['categorias']):
             sources = []
             for si, src in enumerate(cat['sitios']):
-                sources.append(dict(index=si, shortcut=src.get('source_type') == 'shortcut', no_feed=bool(src.get('sin_feed')) and src.get('source_type') != 'shortcut', name=src['nombre'], url=src['url'], feed=src.get('url_feed') or '',
-                                    maximum=src.get('max_articulos') or 3, translate=src.get('modo_titulo', 'en_es') != 'solo_ingles' and src.get('traduccion_es', True),
+                sources.append(dict(index=si, shortcut=src.get('source_type') == 'shortcut', show_shortcut=src.get('show_shortcut', src.get('source_type') == 'shortcut'), no_feed=bool(src.get('sin_feed')) and src.get('source_type') != 'shortcut', name=src['nombre'], url=src['url'], feed=src.get('url_feed') or '',
+                                    maximum=src.get('limite_articulos', 100), translate=src.get('modo_titulo', 'en_es') != 'solo_ingles' and src.get('traduccion_es', True),
                                     icon=self.service.favicon_url(src)))
             categories.append(dict(index=ci, name=cat['nombre'], sources=sorted(sources, key=lambda source: source['no_feed'])))
         reader = self.article_view(self.reader) if self.reader else {}
@@ -130,13 +138,17 @@ class Backend(QObject):
                           translating=self.translating, ready=bool(self.reader.get('cuerpo')),
                           show_image=cfg.get('mostrar_imagenes_lectura', True))
         self._state = dict(page=self.page, category=self.category, source=self.source, query=self.query,
-                           link_sources=[src for cat in categories if not self.category or cat['name'] == self.category for src in cat['sources'] if (src['no_feed'] or src['shortcut']) and (not self.source or src['url'] == self.source)],
-                           palette=self.palette(), theme=cfg.get('color', 'gris'), themes=themes, categories=categories,
+                           link_sources=[src for cat in categories if not self.category or cat['name'] == self.category for src in cat['sources'] if (src['no_feed'] or src['show_shortcut']) and (not self.source or src['url'] == self.source)],
+                           read_batch_count=len(self.read_batch - self.service.seen), read_scope=self.read_scope, read_undo=cfg.get('lectura_deshacer', {}),
+                           history_days=cfg.get('historial_dias', 0), article_period=cfg.get('periodo_articulos', 'hoy'), palette=self.palette(), theme=cfg.get('color', 'gris'), themes=themes, categories=categories,
                            columns=cfg.get('articulos_por_fila', 5), show_images=cfg.get('mostrar_imagenes_lectura', True),
                            translate_titles=cfg.get('mostrar_titulo_es', True), radar=cfg.get('radar_activo', False),
                            radar_words=list(cfg.get('radar_palabras', [])), radar_busy=self.radar_busy,
-                           total_articles=len(self.service.all_articles()), bulk_busy=self.bulk_busy, busy=self.busy, status=self.status, reader=reader,
-                           articles=[self.article_view(a) for a in self.service.filtered(self.page, self.category, self.source, self.query)] if self.page in {'feed','guardados','descargas'} else [],
+                           radar_bilingual=bool(cfg.get('radar_bilingue')),
+                           radar_equivalents=cfg.get('radar_equivalencias', {}),
+                           radar_translating=bool(self.radar_translating),
+                           total_articles=len(self.service.all_articles()), bulk_busy=self.bulk_busy, bulk_cancelling=self.bulk_busy and self.bulk_cancel.is_set(), busy=self.busy, refresh_cancelling=self.busy and self.refresh_cancel.is_set(), status=self.status, reader=reader,
+                           articles=[self.article_view(a) for a in self.service.filtered(self.page, self.category, self.source, self.query)] if self.page in {'feed','guardados','descargas','archivados','historial','retirados'} else [],
                            logo=QUrl.fromLocalFile(str(self.asset_dir / 'choroy_reader_logo.png')).toString(),
                            quote_preview=self.quote_preview, quote_busy=self.quote_busy,
                            quote_can_save=self.quote_image is not None and not self.quote_busy,
@@ -149,11 +161,14 @@ class Backend(QObject):
     def refresh(self):
         if self.busy:
             return
+        self.refresh_cancel.clear()
         self.busy, self.status = True, 'Actualizando…'
         self.publish()
         def done(value, error):
             self.busy = False
-            if error:
+            if self.refresh_cancel.is_set():
+                self.status = 'Actualización cancelada · Se conserva el feed anterior'
+            elif error:
                 self.status = 'Error al actualizar'
                 self.error.emit(error)
             else:
@@ -162,9 +177,16 @@ class Backend(QObject):
                 if errors:
                     self.status += f' · {len(errors)} fuentes sin respuesta'
             self.publish()
-            if not error:
+            if not error and not self.refresh_cancel.is_set():
                 self.analyze_radar()
-        self.background(lambda: self.service.refresh(lambda n,t: self.progress.emit(f'Cargando fuentes: {n}/{t}')), done)
+        self.background(lambda: self.service.refresh(lambda n,t: self.progress.emit(f'Cargando fuentes: {n}/{t}'), self.refresh_cancel), done)
+
+    @Slot()
+    def cancel_refresh(self):
+        if self.busy:
+            self.refresh_cancel.set()
+            self.status = 'Cancelando actualización…'
+            self.publish()
 
     @Slot(str, str, str)
     def navigate(self, page, category='', source=''):
@@ -215,9 +237,55 @@ class Backend(QObject):
         if not word or any(w.casefold() == word.casefold() for w in words):
             return
         self.service.config['radar_palabras'] = [*words, word]
+        if self.service.config.get('radar_bilingue'):
+            self.suggest_radar_equivalents(word)
         self.service.save_config()
         self.publish()
         self.analyze_radar()
+
+    @Slot(bool)
+    def set_radar_bilingual(self, enabled):
+        self.service.config['radar_bilingue'] = enabled
+        self.service.save_config()
+        if enabled:
+            for word in self.service.config.get('radar_palabras', []):
+                if word not in self.service.config.get('radar_equivalencias', {}):
+                    self.suggest_radar_equivalents(word)
+        self.publish()
+
+    @Slot(str, str)
+    def save_radar_equivalents(self, word, text):
+        if word not in self.service.config.get('radar_palabras', []):
+            return
+        self.service.config.setdefault('radar_equivalencias', {})[word] = list(
+            dict.fromkeys(p.strip() for p in text.split(',') if p.strip()))
+        self.service.save_config()
+        self.publish()
+
+    @Slot(str)
+    def suggest_radar_equivalents(self, word):
+        if word in self.radar_translating:
+            return
+        self.radar_translating.add(word)
+        previous = self.service.config.get('radar_equivalencias', {}).get(word)
+        self.publish()
+        def work():
+            results = [core.translate_text(word, target_language=lang) for lang in ('es', 'en')]
+            if not all(results):
+                raise ValueError('No se pudieron obtener equivalencias. Puedes escribirlas o reintentar.')
+            return list(dict.fromkeys(p for p in results if p.casefold() != word.casefold()))
+        def done(value, error):
+            self.radar_translating.discard(word)
+            if word in self.service.config.get('radar_palabras', []):
+                if error:
+                    self.error.emit(str(error))
+                else:
+                    equivalents = self.service.config.setdefault('radar_equivalencias', {})
+                    if equivalents.get(word) == previous:
+                        equivalents[word] = value
+                        self.service.save_config()
+            self.publish()
+        self.background(work, done)
 
     @Slot(str)
     def remove_radar_word(self, word):
@@ -255,8 +323,6 @@ class Backend(QObject):
         token = self.reader_token
         self.reader, self.reader_body, self.reader_status = dict(article), '', 'Cargando artículo…'
         self.translated, self.translating = False, False
-        self.service.seen.add(link)
-        self.service.save_config()
         self.publish()
         def done(value, error):
             if token != self.reader_token:
@@ -310,6 +376,114 @@ class Backend(QObject):
 
     def get_article(self, link):
         return self.reader if self.reader and self.reader['link'] == link else self.service.article(link)
+
+    @Slot(int)
+    def set_history_retention(self, days):
+        if days not in {0, 1, 7, 30, 90, 180, 365}:
+            return
+        self.service.config['historial_dias'] = days
+        self.service.save_config()
+        self.service.cleanup_history()
+        self.publish()
+
+    @Slot(str)
+    def restore_history(self, link):
+        self.service.restore_history(link)
+        self.publish()
+
+    @Slot(str)
+    def set_article_period(self, period):
+        if period not in {'hoy', 'semana', 'mes', 'ano'}:
+            return
+        self.service.config['periodo_articulos'] = period
+        self.service.save_config()
+        self.status = 'Período guardado · Actualiza el feed para buscar artículos de ese período'
+        self.publish()
+
+    @Slot(str)
+    def prepare_mark_all_read(self, scope):
+        if scope not in {'source', 'category', 'library'}:
+            return
+        entries = [a for values in self.service.articles.values() for a in values]
+        for kind in ('guardados', 'descargas', 'archivados', 'historial'):
+            entries.extend(self.service.library.list_items(kind))
+        if scope == 'source':
+            entries = [a for a in entries if self.source and a.get('source_url') == self.source]
+            name = next((src['nombre'] for cat in self.service.config['categorias'] for src in cat['sitios'] if src['url'] == self.source), self.source)
+            self.read_scope = 'Fuente: ' + name
+        elif scope == 'category':
+            urls = {src['url'] for cat in self.service.config['categorias'] if cat['nombre'] == self.category for src in cat['sitios']}
+            entries = [a for a in entries if a.get('source_url') in urls]
+            self.read_scope = 'Categoría: ' + self.category
+        else:
+            self.read_scope = 'Biblioteca completa'
+        self.read_batch = {a['link'] for a in entries} - self.service.seen
+        self.publish()
+
+    @Slot()
+    def mark_all_read(self):
+        changed = self.read_batch - self.service.seen
+        if not changed:
+            return
+        self.service.seen.update(changed)
+        self.service.config['lectura_deshacer'] = dict(links=sorted(changed), scope=self.read_scope, count=len(changed))
+        self.read_batch.clear()
+        self.service.save_config()
+        self.publish()
+
+    @Slot()
+    def undo_mark_all_read(self):
+        undo = self.service.config.pop('lectura_deshacer', {})
+        self.service.seen.difference_update(undo.get('links', []))
+        self.service.save_config()
+        self.publish()
+
+    @Slot(str)
+    def toggle_read(self, link):
+        if not self.get_article(link):
+            return
+        undo = self.service.config.get('lectura_deshacer', {})
+        if link in undo.get('links', []):
+            undo['links'].remove(link)
+        if link in self.service.seen:
+            self.service.seen.remove(link)
+        else:
+            self.service.seen.add(link)
+        self.service.save_config()
+        self.publish()
+
+    @Slot(str)
+    def toggle_dismissed(self, link):
+        if not self.get_article(link):
+            return
+        if link in self.service.dismissed:
+            self.service.dismissed.remove(link)
+        else:
+            self.service.dismissed.add(link)
+        self.service.save_config()
+        if link in self.service.dismissed and self.reader and self.reader['link'] == link:
+            self.close_article()
+        else:
+            self.publish()
+
+    @Slot(str)
+    def toggle_archived(self, link):
+        article = self.get_article(link)
+        if not article:
+            return
+        try:
+            if self.service.library.contains('archivados', link):
+                # Restore even when the article has dropped out of the latest RSS.
+                source = article.get('source_url', '')
+                if not any(a['link'] == link for a in self.service.articles.get(source, [])):
+                    self.service.articles.setdefault(source, []).append(dict(article))
+                self.service.library.save('feed', article)
+                self.service.library.delete('archivados', link)
+            else:
+                self.service.library.save('archivados', article)
+            self.publish()
+        except Exception as error:
+            self.error.emit(str(error))
 
     @Slot(str)
     def toggle_saved(self, link):
@@ -392,7 +566,8 @@ class Backend(QObject):
             self.publish()
 
     @Slot(int, int, int, str, str, str, int, bool, str, bool, result=bool)
-    def save_source(self, category, index, destination, name, url, feed, maximum, translate, icon, shortcut=False):
+    @Slot(int, int, int, str, str, str, int, bool, str, bool, bool, result=bool)
+    def save_source(self, category, index, destination, name, url, feed, maximum, translate, icon, shortcut=False, show_shortcut=None):
         cats = self.service.config['categorias']
         if not (0 <= destination < len(cats)) or not name.strip() or not url.strip():
             self.error.emit('Completa nombre, dirección y categoría')
@@ -418,7 +593,8 @@ class Backend(QObject):
             return False
         source.pop('sin_feed', None)
         source['source_type'] = 'shortcut' if shortcut else 'feed'
-        source.update(nombre=name.strip(), url=url, url_feed=feed.strip() or None, max_articulos=max(1,maximum),
+        source['show_shortcut'] = shortcut if show_shortcut is None else show_shortcut
+        source.update(nombre=name.strip(), url=url, url_feed=feed.strip() or None, limite_articulos=max(1,min(1000,maximum)),
                       modo_titulo='en_es' if translate else 'solo_ingles', traduccion_es=translate,
                       favicon_personalizado=QUrl(icon).toLocalFile() if icon.startswith('file:') else icon or None)
         cats[destination]['sitios'].insert(position, source)
@@ -541,6 +717,13 @@ class Backend(QObject):
         self.render_document()
         self._document_key = None
 
+    @Slot()
+    def cancel_download_all(self):
+        if self.bulk_busy:
+            self.bulk_cancel.set()
+            self.status = 'Cancelando descargas…'
+            self.publish()
+
     @Slot(bool)
     def download_all(self, include_translation):
         if self.bulk_busy:
@@ -548,28 +731,53 @@ class Backend(QObject):
         articles = [dict(article) for article in self.service.all_articles() if article['link'] not in self.downloads]
         if not articles:
             return
+        self.bulk_cancel.clear()
         self.bulk_busy = True
         links = {article['link'] for article in articles}
+        created = set()
         self.downloads.update(links)
         self.publish()
         def work():
             errors = []
             downloaded = 0
             for index, article in enumerate(articles, 1):
+                if self.bulk_cancel.is_set():
+                    break
                 try:
-                    result = self.service.read(article)
-                    self.service.library.save('descargas', result)
-                    downloaded += 1
+                    existing = self.service.library.read('descargas', article['link'])
+                    result = existing or self.service.read(article)
+                    if self.bulk_cancel.is_set():
+                        break
                     if include_translation:
                         self.service.translate_article(result)
+                    if self.bulk_cancel.is_set():
+                        break
+                    if not existing:
+                        self.service.library.save('descargas', result)
+                        created.add(article['link'])
+                    downloaded += 1
                 except Exception as error:
                     errors.append(article.get('titulo', article['link']) + ': ' + str(error))
-                self.progress.emit(f'Preparando lectura sin conexión: {index}/{len(articles)}')
+                if not self.bulk_cancel.is_set():
+                    self.progress.emit(f'Preparando lectura sin conexión: {index}/{len(articles)}')
             return downloaded, errors
         def done(result, error):
+            cancelled = self.bulk_cancel.is_set()
+            cleanup_errors = []
+            if cancelled:
+                for link in created:
+                    try:
+                        self.service.library.delete('descargas', link)
+                    except Exception as cleanup_error:
+                        cleanup_errors.append(str(cleanup_error))
             self.bulk_busy = False
             self.downloads.difference_update(links)
-            if error:
+            if cancelled:
+                self.status = ('Descarga cancelada · No se pudieron eliminar algunas descargas nuevas' if cleanup_errors else
+                               'Descarga cancelada · Se eliminaron las descargas nuevas')
+                if cleanup_errors:
+                    self.error.emit('\n'.join(cleanup_errors))
+            elif error:
                 self.error.emit(error)
             else:
                 count, errors = result
@@ -578,6 +786,29 @@ class Backend(QObject):
                     self.error.emit('Algunas descargas o traducciones fallaron:\n' + '\n'.join(errors))
             self.publish()
         self.background(work, done)
+
+    @Slot(int)
+    def save_reading_position(self, position):
+        if not self.reader or not self.reader_body or not self._document:
+            return
+        length = self._document.characterCount() - 1
+        if length <= 0:
+            return
+        position = max(0, min(position, length))
+        language = 'es' if self.translated else 'original'
+        entry = dict(position=position, percent=round(position * 100 / length), length=length)
+        self.service.config.setdefault('progreso_lectura', {}).setdefault(self.reader['link'], {})[language] = entry
+        self.service.save_config()
+        self.publish()
+
+    @Slot()
+    def resume_reading(self):
+        if not self.reader or not self._document:
+            return
+        language = 'es' if self.translated else 'original'
+        entry = self.service.config.get('progreso_lectura', {}).get(self.reader['link'], {}).get(language)
+        if entry:
+            self.document_search.emit(min(entry['position'], self._document.characterCount() - 1), 0)
 
     @Slot(QObject)
     def attach_document(self, quick_document):
@@ -618,14 +849,24 @@ class Backend(QObject):
         if start < 0 or start >= end:
             return
         remaining = []
+        same_color = []
         for a,b,c in self.marks:
             if b <= start or a >= end:
                 remaining.append((a,b,c))
             else:
                 if a < start: remaining.append((a,start,c))
                 if b > end: remaining.append((end,b,c))
+                if color and QColor(c) == QColor(color):
+                    same_color.append((max(a, start), min(b, end)))
         if color:
-            remaining.append((start,end,color))
+            # Toggle only the portions already painted with this color.
+            position = start
+            for a, b in sorted(same_color):
+                if position < a:
+                    remaining.append((position, a, color))
+                position = max(position, b)
+            if position < end:
+                remaining.append((position, end, color))
         self.marks = remaining
         self.persist_marks()
         self.render_document()

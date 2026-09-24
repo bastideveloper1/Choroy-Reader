@@ -29,12 +29,29 @@ def find_matches(text, query):
             for m in re.finditer(re.escape(query), ''.join(letters))]
 
 
-def score_radar(title, body, words):
+def score_radar(title, body, words, equivalents=None, details=False):
     text = normalize_text(title + '\n' + body)
-    terms = set(normalize_text(p.strip()) for p in words if p.strip())
-    found = {p: len(re.findall(r'(?<!\w)' + re.escape(p) + r'(?!\w)', text)) for p in terms}
-    found = {p: n for p, n in found.items() if n}
-    return len(found), sum(found.values())
+    equivalents = equivalents or {}
+    interests, mentions = 0, 0
+    detected = {}
+    seen = set()
+    for word in words:
+        key = normalize_text(word.strip())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        terms = {normalize_text(p.strip()) for p in [word, *equivalents.get(word, [])] if p.strip()}
+        pattern = r'(?<!\w)(?:' + '|'.join(re.escape(p) for p in sorted(terms, key=len, reverse=True)) + r')(?!\w)'
+        matches = re.findall(pattern, text)
+        count = len(matches)
+        labels = {normalize_text(p.strip()): p.strip() for p in [word, *equivalents.get(word, [])] if p.strip()}
+        for match in set(matches):
+            label = labels[match]
+            detected[label] = max(detected.get(label, 0), matches.count(match))
+        interests += bool(count)
+        mentions += count
+    ranked = sorted(detected, key=lambda label: (-detected[label], label.casefold()))
+    return (interests, mentions, [f"{label} ({detected[label]})" for label in ranked]) if details else (interests, mentions)
 
 
 class Library:
@@ -42,7 +59,7 @@ class Library:
         self.root = Path(root)
 
     def path(self, kind, link):
-        if kind not in {'guardados', 'descargas'}:
+        if kind not in {'guardados', 'descargas', 'archivados', 'feed', 'historial', 'retirados'}:
             raise ValueError('Sección no válida')
         return self.root / kind / (hashlib.sha256(link.encode()).hexdigest() + '.json')
 

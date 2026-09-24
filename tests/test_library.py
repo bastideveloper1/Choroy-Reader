@@ -10,6 +10,76 @@ from choroy_reader.service import Service
 
 
 class LibraryTests(unittest.TestCase):
+    def test_history_retention_protection_recovery_and_identity(self):
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            service = Service(tmp)
+            service.config['historial_dias'] = 30
+            articles = {name: dict(link='https://example.com/' + name, titulo=name, fecha=datetime.now(), cuerpo='Texto', source_url='https://example.com')
+                        for name in ('old', 'pending', 'saved', 'downloaded', 'archived')}
+            for name, article in articles.items():
+                service.remember_article(article)
+                if name != 'pending':
+                    service.seen.add(article['link'])
+            for name, kind in [('saved', 'guardados'), ('downloaded', 'descargas'), ('archived', 'archivados')]:
+                service.library.save(kind, articles[name])
+            old = articles['old']
+            service.dismissed.add(old['link'])
+            service.reader_store.save_original(old['link'], 'Texto conservado')
+            service.save_config()
+            later = time.time() + 31 * 86400
+            self.assertEqual(service.cleanup_history(later), 1)
+            self.assertFalse(service.library.contains('historial', old['link']))
+            self.assertTrue(service.library.contains('retirados', old['link']))
+            self.assertEqual(len(service.library.list_items('historial')), 4)
+            # Repeated RSS entries must not recreate a retired history entry.
+            service.remember_article(old)
+            self.assertFalse(service.library.contains('historial', old['link']))
+            service.restore_history(old['link'], later)
+            self.assertTrue(service.library.contains('historial', old['link']))
+            self.assertEqual(service.cleanup_history(later), 0)
+            service.cleanup_history(later + 31 * 86400)
+            service.cleanup_history(later + 62 * 86400)
+            self.assertFalse(service.library.contains('retirados', old['link']))
+            reopened = Service(tmp)
+            reopened.remember_article(old)
+            self.assertFalse(reopened.library.contains('historial', old['link']))
+            self.assertIn(old['link'], reopened.seen)
+            self.assertIn(old['link'], reopened.dismissed)
+            self.assertEqual(reopened.reader_store.read(old['link'])['original'], 'Texto conservado')
+
+    def test_article_period_boundaries_and_persistence(self):
+        from datetime import timedelta
+        with tempfile.TemporaryDirectory() as tmp:
+            service = Service(tmp)
+            now = datetime(2026, 9, 24, 12).astimezone()
+            today = now.replace(hour=0)
+            self.assertTrue(service.in_period(today, now=now))
+            self.assertFalse(service.in_period(today - timedelta(seconds=1), now=now))
+            self.assertFalse(service.in_period(None, now=now))
+            self.assertFalse(service.in_period(now + timedelta(days=1), now=now))
+            for period, days in [('semana', 6), ('mes', 29)]:
+                config = {'periodo_articulos': period}
+                self.assertTrue(service.in_period(today - timedelta(days=days), config, now))
+                self.assertFalse(service.in_period(today - timedelta(days=days, seconds=1), config, now))
+            service.config['periodo_articulos'] = 'ano'
+            service.save_config()
+            self.assertTrue(Service(tmp).in_period(now.replace(month=1, day=1), now=now))
+
+    def test_fetch_filters_dates_before_limit_and_deduplicates(self):
+        from datetime import timedelta
+        with tempfile.TemporaryDirectory() as tmp:
+            service = Service(tmp)
+            now = datetime.now().astimezone()
+            source = {'nombre': 'Fuente', 'url': 'https://example.com', 'url_feed': 'https://example.com/rss', 'limite_articulos': 2}
+            raw = [('Viejo', 'https://example.com/old', None, (now - timedelta(days=3)).isoformat())]
+            raw += [('Actual', f'https://example.com/{n}', None, now.isoformat()) for n in [1, 1, 2, 3]]
+            with patch.object(service, 'fetch_favicon'), patch.object(service, 'fetch_image', return_value=None), patch.object(core, 'get_articles', return_value=raw):
+                _, articles = service.fetch_source(source, {'mostrar_titulo_es': False})
+            self.assertEqual(len(articles), 2)
+            self.assertEqual(len({a['link'] for a in articles}), 2)
+            self.assertNotIn('https://example.com/old', [a['link'] for a in articles])
+
     def test_missing_feed_is_distinct_from_network_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = Service(tmp)
@@ -89,7 +159,7 @@ class ServiceTests(unittest.TestCase):
     def test_search_category_and_radar_filters(self):
         s=self.service
         s.config.update(categorias=[{'nombre':'Tech','sitios':[{'nombre':'A','url':'a'}]}],radar_activo=True,radar_palabras=['seguridad','privacidad'])
-        s.articles={'a':[dict(link='1',titulo='Seguridad',fecha=None,source_url='a'),dict(link='2',titulo='SEGURIDAD y privacidad',fecha=None,source_url='a')]}
+        s.articles={'a':[dict(link='1',titulo='Seguridad',fecha=datetime.now(),source_url='a'),dict(link='2',titulo='SEGURIDAD y privacidad',fecha=datetime.now(),source_url='a')]}
         self.assertEqual([a['link'] for a in s.filtered(category='Tech',query='seguridad')],['2','1'])
         self.assertEqual(s.filtered(query='imposible'),[])
 
