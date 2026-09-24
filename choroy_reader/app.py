@@ -22,24 +22,27 @@ def run():
     args = parser.parse_args()
     os.environ.setdefault('QT_QUICK_CONTROLS_STYLE', 'Basic')
     app = QGuiApplication.instance() or QGuiApplication(sys.argv[:1])
-    app.setApplicationName('MinimalFeed')
-    app.setOrganizationName('MinimalFeed')
+    app.setApplicationName('Choroy Reader')
+    app.setOrganizationName('Choroy Reader')
     project = Path(__file__).resolve().parent.parent
-    root = args.data_dir or Path(os.environ.get('MINIMALFEED_DATA_DIR', Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))/'noticias'))
+    config_root = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))
+    legacy_root = config_root / 'noticias'
+    default_root = legacy_root if (legacy_root / 'config.json').is_file() else config_root / 'choroy_reader'
+    root = args.data_dir or Path(os.environ.get('CHOROY_READER_DATA_DIR', os.environ.get('MINIMALFEED_DATA_DIR', default_root)))
     service = Service(root)
     if args.demo:
-        service.config['categorias'] = [{'nombre':'Tecnología', 'sitios':[{'nombre':'MinimalFeed','url':'https://example.com','url_feed':'https://example.com/feed'}]}]
-        article = dict(titulo='MinimalFeed: tus fuentes y tu lectura en un mismo lugar', titulo_es='Un lector pensado para leer con calma',
-                       link='https://example.com/article', fuente='MinimalFeed', source_url='https://example.com',
+        service.config['categorias'] = [{'nombre':'Tecnología', 'sitios':[{'nombre':'Choroy Reader','url':'https://example.com','url_feed':'https://example.com/feed'}]}]
+        article = dict(titulo='Choroy Reader: tus fuentes y tu lectura en un mismo lugar', titulo_es='Un lector pensado para leer con calma',
+                       link='https://example.com/article', fuente='Choroy Reader', source_url='https://example.com',
                        cuerpo='Este artículo de prueba permite seleccionar texto, destacar varias líneas y buscar palabras.\n\nLa biblioteca conserva los artículos guardados y las descargas permiten leer sin conexión.',
                        estado_contenido='Demostración local', fecha=datetime.now(timezone.utc), traducir_es=True,
-                       imagen=(project/'assets/minimalfeed-logo.png').read_bytes())
+                       imagen=(project/'assets/choroy_reader_logo.png').read_bytes())
         service.articles={'https://example.com':[article]}
     backend = Backend(service, project/'assets')
-    app.setWindowIcon(QIcon(str(project/'assets/minimalfeed-logo.png')))
+    app.setWindowIcon(QIcon(str(project/'assets/choroy_reader_logo.png')))
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty('backend', backend)
-    engine.load(QUrl.fromLocalFile(str(Path(__file__).parent/'qml/Main.qml')))
+    engine.load(QUrl.fromLocalFile(str(Path(__file__).parent/'qml/main.qml')))
     if not engine.rootObjects():
         return 1
     if not args.no_network and not args.demo:

@@ -5,12 +5,18 @@ import io
 import json
 import os
 import tempfile
+import re
+import time
+import textwrap
+import urllib.parse
+from html import unescape
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from PIL import Image
-from biblioteca import Biblioteca, coincidencias, puntuar_radar
+from choroy_reader.library import Library, find_matches, score_radar
 from . import core
+from .reader_store import ReaderStore
 
 
 class Service:
@@ -22,12 +28,13 @@ class Service:
             if not isinstance(self.config.get('categorias'), list):
                 raise ValueError('La configuración no contiene una lista de categorías válida')
         else:
-            self.config = copy.deepcopy(core.CONFIG_INICIAL)
+            self.config = copy.deepcopy(core.DEFAULT_CONFIG)
         self.config.setdefault('color', self.config.get('tema', 'gris'))
         self.config.setdefault('radar_palabras', [])
-        self.library = Biblioteca(self.root / 'biblioteca')
+        self.library = Library(self.root / 'biblioteca')
         self.articles = {}
         self.content = {}
+        self.reader_store = ReaderStore(self.root / "reader_state.sqlite3")
         self.seen = set(self.config.get('vistos', []))
 
     def save_config(self):
@@ -61,19 +68,19 @@ class Service:
         return path.as_uri()
 
     def fetch_image(self, link, image_url=None):
-        candidates = [core.urllib.parse.urljoin(link, core.unescape(image_url))] if image_url else []
+        candidates = [urllib.parse.urljoin(link, unescape(image_url))] if image_url else []
         for candidate in candidates:
             try:
-                data = core.descargar(candidate, timeout=8)
+                data = core.download(candidate, timeout=8)
                 with Image.open(io.BytesIO(data)) as image:
                     image.verify()
                 return data
             except Exception:
                 pass
-        candidate = core.obtener_imagen_og(link)
+        candidate = core.get_open_graph_image(link)
         if candidate:
             try:
-                data = core.descargar(candidate, timeout=8)
+                data = core.download(candidate, timeout=8)
                 with Image.open(io.BytesIO(data)) as image:
                     image.verify()
                 return data
@@ -81,22 +88,68 @@ class Service:
                 pass
         return None
 
+    def favicon_path(self, url):
+        return self.root / 'cache' / 'favicons' / (hashlib.sha256(url.encode()).hexdigest() + '.png')
+
+    def favicon_url(self, source):
+        custom = source.get('favicon_personalizado')
+        path = Path(custom) if custom else self.favicon_path(source['url'])
+        return path.resolve().as_uri() if path.is_file() else ''
+
+    def fetch_favicon(self, source):
+        path = self.favicon_path(source['url'])
+        if path.is_file() or source.get('favicon_personalizado'):
+            return
+        candidates = []
+        try:
+            from bs4 import BeautifulSoup
+            html = core.download(source['url'], timeout=6).decode('utf-8', errors='replace')
+            soup = BeautifulSoup(html, 'html.parser')
+            candidates = [urllib.parse.urljoin(source['url'], node['href'])
+                          for node in soup.find_all('link', href=True)
+                          if 'icon' in ' '.join(node.get('rel', [])).lower()]
+        except Exception:
+            pass
+        candidates.append(urllib.parse.urljoin(source['url'], '/favicon.ico'))
+        for candidate in candidates[:4]:
+            if urllib.parse.urlparse(candidate).scheme not in {'http', 'https'}:
+                continue
+            try:
+                data = core.download(candidate, timeout=6)
+                with Image.open(io.BytesIO(data)) as icon:
+                    icon.thumbnail((64, 64), Image.Resampling.LANCZOS)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    icon.convert('RGBA').save(path, 'PNG')
+                return
+            except Exception:
+                continue
+
     def fetch_source(self, source, config):
         source = copy.deepcopy(source)
-        feed = source.get('url_feed') or core.descubrir_feed(source['url'])
+        self.fetch_favicon(source)
+        if source.get('source_type') == 'shortcut':
+            source['sin_feed'] = False
+            return source, []
+        feed = source.get('url_feed') or core.discover_feed(source['url'])
         source['url_feed'] = feed
         if not feed:
-            raise ValueError('No se encontró un feed')
-        raw = core.obtener_articulos(feed, maximo=source.get('max_articulos') or core.ARTICULOS_POR_SITIO)
+            # Una portada inaccesible es un error temporal, no ausencia de RSS.
+            core.download(source['url'], timeout=10)
+            source['sin_feed'] = True
+            return source, []
+        source['sin_feed'] = False
+        raw = core.get_articles(feed, maximum=source.get('max_articulos') or core.ARTICLES_PER_SOURCE)
         if raw is None:
             raise ValueError('No se pudo descargar el feed')
         output = []
         for title, link, image, date in raw:
             translate = (config.get('mostrar_titulo_es', True) and source.get('modo_titulo', 'en_es') != 'solo_ingles'
                          and source.get('traduccion_es', True))
-            translated = core.traducir_texto(title) if translate else ''
+            translated = core.translate_text(title, skip_spanish=True) if translate else ''
+            if translated and ' '.join(translated.casefold().split()) == ' '.join(title.casefold().split()):
+                translated = ''
             output.append(dict(titulo=title, titulo_es=translated or '', link=link,
-                               imagen=self.fetch_image(link, image), fecha=core.parsear_fecha_texto(date),
+                               imagen=self.fetch_image(link, image), fecha=core.parse_date(date),
                                fuente=source['nombre'], source_url=source['url'], traducir_es=translate))
         return source, output
 
@@ -124,7 +177,8 @@ class Service:
             for source in category['sitios']:
                 if source['url'] in updated:
                     source['url_feed'] = updated[source['url']].get('url_feed')
-                    source['ultima_actualizacion'] = core.time.time()
+                    source['sin_feed'] = updated[source['url']].get('sin_feed', False)
+                    source['ultima_actualizacion'] = time.time()
         self.save_config()
         return errors
 
@@ -132,22 +186,29 @@ class Service:
         articles = {}
         for category in self.config['categorias']:
             for source in category['sitios']:
+                if source.get('source_type') == 'shortcut':
+                    continue
                 for article in self.articles.get(source['url'], []):
                     articles.setdefault(article['link'], article)
         return sorted(articles.values(), key=lambda a: a['fecha'].timestamp() if a.get('fecha') else 0, reverse=True)
 
     def article(self, link):
-        return next((a for a in self.all_articles() if a['link'] == link), None) or self.library.leer('descargas', link) or self.library.leer('guardados', link)
+        return next((a for a in self.all_articles() if a['link'] == link), None) or self.library.read('descargas', link) or self.library.read('guardados', link)
 
     def read(self, article, offline=False):
         article = dict(article)
         link = article['link']
-        local = self.library.leer('descargas', link)
+        local = self.library.read('descargas', link)
         if offline:
             if not local:
                 raise ValueError('La descarga ya no existe')
             return local
+        snapshot = self.reader_store.read(link)
+        if snapshot:
+            article['cuerpo'] = snapshot['original']
+            return article
         if article.get('cuerpo'):
+            self.reader_store.save_original(link, article['cuerpo'])
             return article
         if local:
             return local
@@ -155,55 +216,66 @@ class Service:
             return dict(self.content[link])
         text = ''
         try:
-            html = core.descargar(link, timeout=15).decode('utf-8', errors='replace')
-            lang = core.re.search(r'<html\b[^>]*\blang=["\']([a-zA-Z]+)', html, core.re.I)
+            html = core.download(link, timeout=15).decode('utf-8', errors='replace')
+            lang = re.search(r'<html\b[^>]*\blang=["\']([a-zA-Z]+)', html, re.I)
             if lang:
                 article['idioma_original'] = lang.group(1).lower()
-            text = core.texto_articulo(html)
+            text = core.article_text(html)
         except Exception:
             pass
         status = 'Texto extraído del sitio'
         if not text:
-            parser = core.ContenidoHTML()
-            parser.feed(core.contenido_feed.get(link, ''))
-            text = parser.texto()
+            parser = core.HtmlContent()
+            parser.feed(core.feed_content.get(link, ''))
+            text = parser.text()
             status = 'Contenido del feed · Puede ser un resumen'
         if not text:
             raise ValueError('No se pudo recuperar el texto. Puedes abrir el sitio original.')
         article.update(cuerpo=text, estado_contenido=status)
         if not article.get('imagen'):
             article['imagen'] = self.fetch_image(link)
+        self.reader_store.save_original(link, text)
         self.content[link] = article
         return article
 
     def translate(self, text):
         chunks = []
         for paragraph in text.split('\n\n'):
-            for part in core.textwrap.wrap(paragraph, width=1200, break_long_words=False, break_on_hyphens=False):
-                result = core.traducir_texto(part)
+            for part in textwrap.wrap(paragraph, width=1200, break_long_words=False, break_on_hyphens=False):
+                result = core.translate_text(part)
                 if not result:
                     raise ValueError('No se pudo traducir. Puedes reintentar.')
                 chunks.append(result)
         return '\n\n'.join(chunks)
 
+    def translate_article(self, article):
+        original = article['cuerpo']
+        self.reader_store.save_original(article['link'], original)
+        snapshot = self.reader_store.read(article['link'])
+        if snapshot and snapshot['translation']:
+            return snapshot['translation']
+        translated = original if article.get('idioma_original') == 'es' else self.translate(original)
+        self.reader_store.save_translation(article['link'], original, translated)
+        return translated
+
     def score(self, article):
         text = article.get('cuerpo') or self.content.get(article['link'], {}).get('cuerpo', '')
         if not text:
-            parser = core.ContenidoHTML()
-            parser.feed(core.contenido_feed.get(article['link'], ''))
-            text = parser.texto()
-        return puntuar_radar(article.get('titulo', '') + ' ' + (article.get('titulo_es') or ''), text,
+            parser = core.HtmlContent()
+            parser.feed(core.feed_content.get(article['link'], ''))
+            text = parser.text()
+        return score_radar(article.get('titulo', '') + ' ' + (article.get('titulo_es') or ''), text,
                             self.config.get('radar_palabras', []))
 
     def filtered(self, page='feed', category='', source='', query=''):
-        articles = self.library.listar(page) if page in {'guardados', 'descargas'} else self.all_articles()
+        articles = self.library.list_items(page) if page in {'guardados', 'descargas'} else self.all_articles()
         if category:
             sources = {s['url'] for c in self.config['categorias'] if c['nombre'] == category for s in c['sitios']}
             articles = [a for a in articles if a.get('source_url') in sources]
         if source:
             articles = [a for a in articles if a.get('source_url') == source]
         if query:
-            articles = [a for a in articles if coincidencias(a.get('titulo', '') + ' ' + (a.get('titulo_es') or ''), query)]
+            articles = [a for a in articles if find_matches(a.get('titulo', '') + ' ' + (a.get('titulo_es') or ''), query)]
         if self.config.get('radar_activo'):
             articles.sort(key=self.score, reverse=True)
         return articles
