@@ -1,0 +1,21 @@
+{
+  "name": "Choroy Reader",
+  "version": "0.1.0",
+  "author": "Bastian Enrique",
+  "description": "Lector de noticias RSS para organizar fuentes, descubrir intereses y leer con calma, incluso sin conexión.",
+  "license": "Sin licencia declarada",
+  "license_file": "",
+  "repository": "https://github.com/bastideveloper1/minimalfeed",
+  "issues": "https://github.com/bastideveloper1/minimalfeed/issues/new",
+  "credits": [
+    "Interfaz: Qt y Qt for Python (PySide6), The Qt Company y colaboradores.",
+    "Procesamiento de imágenes: Pillow y sus colaboradores.",
+    "Extracción de contenido: Beautiful Soup y Soup Sieve.",
+    "Lenguaje y biblioteca estándar: Python Software Foundation y colaboradores.",
+    "Persistencia local: SQLite y sus colaboradores.",
+    "Los contenidos, imágenes y marcas de las fuentes pertenecen a sus respectivos titulares."
+  ],
+  "location": "Santiago de Chile",
+  "github": "bastideveloper1",
+  "stage": "Beta"
+}

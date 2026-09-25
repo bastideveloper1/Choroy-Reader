@@ -492,6 +492,31 @@ class QtTests(unittest.TestCase):
             self.backend.set_history_retention(days)
             self.assertEqual(Service(self.tmp.name).config['historial_dias'], days)
 
+    def test_portability_actions_reload_state_and_reject_busy_operations(self):
+        backup = Path(self.tmp.name) / 'backup.zip'
+        self.backend.portability_action('backup', QUrl.fromLocalFile(str(backup)).toString())
+        for _ in range(200):
+            QTest.qWait(10)
+            if not self.backend.portability_busy:
+                break
+        self.assertTrue(backup.is_file())
+        self.assertEqual(self.backend.active_jobs, 0)
+        self.backend.service.config['categorias'] = []
+        self.backend.service.save_config()
+        self.backend.portability_action('restore', QUrl.fromLocalFile(str(backup)).toString())
+        for _ in range(200):
+            QTest.qWait(10)
+            if not self.backend.portability_busy:
+                break
+        self.assertEqual(self.backend.state['categories'][0]['name'], 'Tech')
+        self.assertEqual(self.backend.page, 'sources')
+        self.assertEqual(self.backend.active_jobs, 0)
+        self.backend.active_jobs = 1
+        blocked = Path(self.tmp.name) / 'blocked.opml'
+        self.backend.portability_action('export_opml', QUrl.fromLocalFile(str(blocked)).toString())
+        self.assertFalse(blocked.exists())
+        self.backend.active_jobs = 0
+
     def test_article_states_survive_refresh_restart_and_restore(self):
         link = self.article['link']
         # Repeated entries in RSS and across sources still produce one card.

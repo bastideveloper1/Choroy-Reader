@@ -7,6 +7,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QObject, Signal, Property, Slot, QUrl, QStandardPaths
 from PySide6.QtGui import QColor, QTextCursor, QTextCharFormat, QDesktopServices
+from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from choroy_reader.library import find_matches
 from . import core
@@ -23,9 +24,16 @@ class Backend(QObject):
         super().__init__(parent)
         self.service = service
         self.asset_dir = Path(asset_dir)
+        from .about import load_about
+        self.about_info = load_about(self.asset_dir)
+        self.notice_title = ''
+        self.notice_body = '' 
         self.page, self.category, self.source, self.query = 'feed', '', '', ''
+        self.collection_filter = ''
         self.status = 'Listo'
         self.busy = False
+        self.active_jobs = 0
+        self.portability_busy = False
         self.refresh_cancel = threading.Event()
         self.radar_busy = False
         self.radar_translating = set()
@@ -40,6 +48,7 @@ class Backend(QObject):
         self.read_scope = ""
         self.bulk_cancel = threading.Event()
         self._document_key = None
+        self.resume_link = None
         self.reader_token = 0
         self.quote_token = 0
         self.quote_data = None
@@ -54,9 +63,47 @@ class Backend(QObject):
         self.finished.connect(self._finish)
         self.progress.connect(self._progress)
         self._state = {}
+        self.storage_info = self._storage_snapshot()
         self.publish()
 
+    @staticmethod
+    def _format_size(size):
+        size = max(0, int(size or 0))
+        units = ('B', 'KB', 'MB', 'GB', 'TB')
+        for unit in units:
+            if size < 1024 or unit == units[-1]:
+                return f'{size} {unit}' if unit == 'B' else f'{size:.1f} {unit}'
+            size /= 1024
+
+    def _storage_snapshot(self):
+        report = self.service.storage_report()
+        installation_root = self.asset_dir.parent.resolve()
+        data_root = self.service.root.resolve()
+        # En una instalación normal ambas rutas son distintas. Si alguien
+        # ejecuta el código desde su carpeta de datos, no inventamos un
+        # desglose que físicamente no se puede separar.
+        shared_location = (data_root == installation_root or
+                           data_root in installation_root.parents or
+                           installation_root in data_root.parents)
+        installation = 0 if shared_location else self.service._size(installation_root)
+        return {
+            'data_path': report['path'],
+            'installation_path': str(installation_root),
+            'database': self._format_size(report['database']),
+            'articles': self._format_size(report['articles']),
+            'images': self._format_size(report['images']),
+            'cache': self._format_size(report['cache']),
+            'other': self._format_size(report['other']),
+            'user_total': self._format_size(report['total']),
+            'installation_total': self._format_size(installation) if not shared_location else 'Ubicación compartida',
+            'installation_shared': shared_location,
+            'recoverable': self._format_size(report['recoverable']),
+            'recoverable_bytes': report['recoverable'],
+        }
+
     def background(self, work, callback):
+        self.active_jobs += 1
+        self.publish()
         def run():
             try:
                 result, error = work(), None
@@ -71,10 +118,12 @@ class Backend(QObject):
     @Slot(object)
     def _finish(self, result):
         callback, value, error = result
+        self.active_jobs = max(0, self.active_jobs - 1)
         try:
             callback(value, error)
         except Exception as e:
             self.error.emit(str(e))
+        self.publish()
 
     @Slot(str)
     def _progress(self, value):
@@ -112,6 +161,7 @@ class Backend(QObject):
         distinct, count, detected = self.service.score(article, details=True) if self.service.config.get('radar_activo') else (0, 0, [])
         progress = self.service.config.get('progreso_lectura', {}).get(link, {})
         position = progress.get('es' if self.reader and self.reader['link'] == link and self.translated else 'original', {})
+        collections = [item['name'] for item in self.service.config.get('colecciones', []) if link in item.get('links', [])]
         return dict(reading_progress=position, link=link, title=article.get('titulo', ''), title_html=self.title_html(article.get('titulo', '')),
                     translation=article.get('titulo_es') or '', translation_html=self.title_html(article.get('titulo_es') or ''),
                     show_translation=bool(self.service.config.get('mostrar_titulo_es', True) and translate_enabled and article.get('traducir_es')), source=article.get('fuente', ''),
@@ -119,7 +169,7 @@ class Backend(QObject):
                     saved=self.service.library.contains('guardados', link), downloaded=self.service.library.contains('descargas', link),
                     downloading=link in self.downloads, seen=link in self.service.seen,
                     dismissed=link in self.service.dismissed, archived=self.service.library.contains('archivados', link),
-                    radar=min(3, distinct), interests=distinct, mentions=count, radar_detected=detected)
+                    radar=min(3, distinct), interests=distinct, mentions=count, radar_detected=detected, collections=collections)
 
     def publish(self):
         cfg = self.service.config
@@ -128,19 +178,40 @@ class Backend(QObject):
         for ci, cat in enumerate(cfg['categorias']):
             sources = []
             for si, src in enumerate(cat['sitios']):
-                sources.append(dict(index=si, shortcut=src.get('source_type') == 'shortcut', show_shortcut=src.get('show_shortcut', src.get('source_type') == 'shortcut'), no_feed=bool(src.get('sin_feed')) and src.get('source_type') != 'shortcut', name=src['nombre'], url=src['url'], feed=src.get('url_feed') or '',
+                shortcut = src.get('source_type') == 'shortcut'
+                show_shortcut = src.get('show_shortcut', shortcut)
+                # Un sitio sin RSS que se ofrece como atajo debe verse y
+                # ordenarse como tal, aunque siga siendo una fuente normal en
+                # la configuración.
+                direct_access = shortcut or (show_shortcut and bool(src.get('sin_feed')))
+                sources.append(dict(index=si, shortcut=shortcut, show_shortcut=show_shortcut,
+                                    direct_access=direct_access,
+                                    no_feed=bool(src.get('sin_feed')) and not direct_access, name=src['nombre'], url=src['url'], feed=src.get('url_feed') or '',
                                     maximum=src.get('limite_articulos', 100), translate=src.get('modo_titulo', 'en_es') != 'solo_ingles' and src.get('traduccion_es', True),
                                     icon=self.service.favicon_url(src)))
-            categories.append(dict(index=ci, name=cat['nombre'], sources=sorted(sources, key=lambda source: source['no_feed'])))
+            # Los accesos directos se muestran primero; nunca deben heredar la
+            # advertencia de una detección RSS anterior.
+            categories.append(dict(index=ci, name=cat['nombre'], sources=sorted(
+                sources, key=lambda source: (0 if source['direct_access'] else 1 if not source['no_feed'] else 2, source['name'].casefold()))))
         reader = self.article_view(self.reader) if self.reader else {}
         if reader:
             reader.update(body=self.reader_body, status=self.reader_status, translated=self.translated,
                           translating=self.translating, ready=bool(self.reader.get('cuerpo')),
                           show_image=cfg.get('mostrar_imagenes_lectura', True))
-        self._state = dict(page=self.page, category=self.category, source=self.source, query=self.query,
-                           link_sources=[src for cat in categories if not self.category or cat['name'] == self.category for src in cat['sources'] if (src['no_feed'] or src['show_shortcut']) and (not self.source or src['url'] == self.source)],
+        collection_items = [dict(id='', name='Todas las colecciones')] + [dict(id=item['id'], name=item['name']) for item in cfg.get('colecciones', [])]
+        articles = self.service.filtered(self.page, self.category, self.source, self.query) if self.page in {'feed','guardados','descargas','archivados','historial','retirados'} else []
+        if self.page == 'guardados' and self.collection_filter:
+            links = next((set(item.get('links', [])) for item in cfg.get('colecciones', []) if item['id'] == self.collection_filter), set())
+            articles = [article for article in articles if article['link'] in links]
+        self._state = dict(about=self.about_info, notice_title=self.notice_title, notice_body=self.notice_body, storage=self.storage_info, page=self.page, category=self.category, source=self.source, query=self.query,
+                           link_sources=sorted(
+                               [src for cat in categories if not self.category or cat['name'] == self.category
+                                for src in cat['sources']
+                                if (src['direct_access'] or src['no_feed'] or src['show_shortcut'])
+                                and (not self.source or src['url'] == self.source)],
+                               key=lambda src: (0 if src['direct_access'] else 1, src['name'].casefold())),
                            read_batch_count=len(self.read_batch - self.service.seen), read_scope=self.read_scope, read_undo=cfg.get('lectura_deshacer', {}),
-                           history_days=cfg.get('historial_dias', 0), article_period=cfg.get('periodo_articulos', 'hoy'), palette=self.palette(), theme=cfg.get('color', 'gris'), themes=themes, categories=categories,
+                           portability_busy=self.portability_busy, portability_ready=self.active_jobs == 0 and not self.portability_busy, history_days=cfg.get('historial_dias', 0), article_period=cfg.get('periodo_articulos', 'dos_dias'), palette=self.palette(), theme=cfg.get('color', 'gris'), themes=themes, categories=categories,
                            columns=cfg.get('articulos_por_fila', 5), show_images=cfg.get('mostrar_imagenes_lectura', True),
                            translate_titles=cfg.get('mostrar_titulo_es', True), radar=cfg.get('radar_activo', False),
                            radar_words=list(cfg.get('radar_palabras', [])), radar_busy=self.radar_busy,
@@ -148,12 +219,14 @@ class Backend(QObject):
                            radar_equivalents=cfg.get('radar_equivalencias', {}),
                            radar_translating=bool(self.radar_translating),
                            total_articles=len(self.service.all_articles()), bulk_busy=self.bulk_busy, bulk_cancelling=self.bulk_busy and self.bulk_cancel.is_set(), busy=self.busy, refresh_cancelling=self.busy and self.refresh_cancel.is_set(), status=self.status, reader=reader,
-                           articles=[self.article_view(a) for a in self.service.filtered(self.page, self.category, self.source, self.query)] if self.page in {'feed','guardados','descargas','archivados','historial','retirados'} else [],
+                           collections=collection_items, collection_filter=self.collection_filter,
+                           articles=[self.article_view(a) for a in articles],
                            logo=QUrl.fromLocalFile(str(self.asset_dir / 'choroy_reader_logo.png')).toString(),
                            quote_preview=self.quote_preview, quote_busy=self.quote_busy,
                            quote_can_save=self.quote_image is not None and not self.quote_busy,
                            quote_has_image=bool(self.quote_data and self.quote_data['article'].get('imagen')),
                            quote_is_translated=bool(self.quote_data and self.quote_data['translated']),
+                           quote_title_has_translation=bool(self.quote_data and self.quote_data['article'].get('titulo_es')),
                            downloads_folder=QUrl.fromLocalFile(QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)).toString())
         self.changed.emit()
 
@@ -195,6 +268,33 @@ class Backend(QObject):
         self.reader = None
         self.reader_body = ''
         self.publish()
+        if page == 'storage':
+            self.refresh_storage()
+
+    @Slot()
+    def refresh_storage(self):
+        def done(value, error):
+            if error:
+                self.error.emit(error)
+            else:
+                self.storage_info = value
+            self.publish()
+        self.background(self._storage_snapshot, done)
+
+    @Slot()
+    def clear_storage_cache(self):
+        def work():
+            released = self.service.clear_regenerable_cache()
+            return released, self._storage_snapshot()
+
+        def done(value, error):
+            if error:
+                self.error.emit(error)
+            else:
+                released, self.storage_info = value
+                self.status = 'Caché limpiada · ' + self._format_size(released) + ' recuperados'
+            self.publish()
+        self.background(work, done)
 
     @Slot(str)
     def search_titles(self, query):
@@ -314,7 +414,13 @@ class Backend(QObject):
         self.background(work, done)
 
     @Slot(str)
+    def open_article_at_position(self, link):
+        self.open_article(link)
+        self.resume_link = link
+
+    @Slot(str)
     def open_article(self, link):
+        self.resume_link = None
         article = self.service.article(link)
         if not article:
             return
@@ -378,6 +484,73 @@ class Backend(QObject):
         return self.reader if self.reader and self.reader['link'] == link else self.service.article(link)
 
     @Slot(int)
+    def show_dependency_license(self, index):
+        if not 0 <= index < len(self.about_info['dependencies']):
+            return
+        from .about import notice_text
+        dependency = self.about_info['dependencies'][index]
+        try:
+            self.notice_body = notice_text(self.asset_dir, dependency)
+            self.notice_title = dependency['name'] + ' · ' + dependency['version']
+            self.publish()
+        except Exception as error:
+            self.error.emit(str(error))
+
+    @Slot(str, str)
+    def portability_action(self, action, url):
+        if self.active_jobs or self.portability_busy:
+            self.error.emit('Espera a que terminen las tareas en curso antes de importar o respaldar.')
+            return
+        from . import portability
+        path = QUrl(url).toLocalFile()
+        if not path or action not in {'import_opml', 'export_opml', 'backup', 'restore'}:
+            self.error.emit('Selecciona un archivo local válido')
+            return
+        self.portability_busy = True
+        self.status = 'Procesando archivo local…'
+        self.publish()
+        def work():
+            if action == 'backup':
+                portability.create_backup(self.service, path)
+                return None
+            if action == 'restore':
+                return portability.restore_backup(self.service, path)
+            if action == 'export_opml':
+                portability.export_opml(self.service.config, portability.safe_target(self.service.root, path))
+                return None
+            return portability.import_opml(self.service.config, path)
+        def done(value, error):
+            self.portability_busy = False
+            if error:
+                self.status = 'No se pudo completar la operación'
+                self.error.emit(error)
+            elif action == 'restore':
+                self.service, recovery = value
+                self.reader_token += 1
+                self.reader = None
+                self.reader_body = ''
+                self._document = None
+                self._document_key = None
+                self.marks = []
+                self.read_batch.clear()
+                self.page, self.category, self.source, self.query = 'sources', '', '', ''
+                self.status = 'Copia restaurada · Respaldo anterior: ' + str(recovery)
+            elif action == 'import_opml':
+                config, added, skipped = value
+                previous = self.service.config
+                self.service.config = config
+                try:
+                    self.service.save_config()
+                except Exception:
+                    self.service.config = previous
+                    raise
+                self.status = f'OPML importado · {added} fuentes añadidas · {skipped} omitidas · Actualiza el feed'
+            else:
+                self.status = 'Archivo guardado: ' + path
+            self.publish()
+        self.background(work, done)
+
+    @Slot(int)
     def set_history_retention(self, days):
         if days not in {0, 1, 7, 30, 90, 180, 365}:
             return
@@ -393,7 +566,7 @@ class Backend(QObject):
 
     @Slot(str)
     def set_article_period(self, period):
-        if period not in {'hoy', 'semana', 'mes', 'ano'}:
+        if period not in {'hoy', 'dos_dias', 'semana', 'mes', 'ano'}:
             return
         self.service.config['periodo_articulos'] = period
         self.service.save_config()
@@ -493,11 +666,57 @@ class Backend(QObject):
         try:
             if self.service.library.contains('guardados', link):
                 self.service.library.delete('guardados', link)
+                for collection in self.service.config.get('colecciones', []):
+                    collection['links'] = [item for item in collection.get('links', []) if item != link]
+                self.service.save_config()
             else:
                 self.service.library.save('guardados', article)
             self.publish()
         except Exception as e:
             self.error.emit(str(e))
+
+    @Slot(str)
+    def set_collection_filter(self, collection_id):
+        self.collection_filter = collection_id if any(item['id'] == collection_id for item in self.service.config.get('colecciones', [])) else ''
+        self.publish()
+
+    @Slot(str)
+    def save_collection(self, name):
+        name = name.strip()
+        if not name:
+            self.error.emit('Escribe un nombre para la colección')
+            return
+        if any(item['name'].casefold() == name.casefold() for item in self.service.config.get('colecciones', [])):
+            self.error.emit('Ya existe una colección con ese nombre')
+            return
+        import uuid
+        self.service.config.setdefault('colecciones', []).append({'id': uuid.uuid4().hex, 'name': name, 'links': []})
+        self.service.save_config()
+        self.publish()
+
+    @Slot(str)
+    def delete_collection(self, collection_id):
+        self.service.config['colecciones'] = [item for item in self.service.config.get('colecciones', []) if item['id'] != collection_id]
+        if self.collection_filter == collection_id:
+            self.collection_filter = ''
+        self.service.save_config()
+        self.publish()
+
+    @Slot(str, str)
+    def toggle_article_collection(self, link, collection_id):
+        if not self.service.library.contains('guardados', link):
+            self.error.emit('Guarda el artículo antes de organizarlo en colecciones')
+            return
+        collection = next((item for item in self.service.config.get('colecciones', []) if item['id'] == collection_id), None)
+        if not collection:
+            return
+        links = collection.setdefault('links', [])
+        if link in links:
+            links.remove(link)
+        else:
+            links.append(link)
+        self.service.save_config()
+        self.publish()
 
     @Slot(str)
     def toggle_download(self, link):
@@ -654,7 +873,12 @@ class Backend(QObject):
         self.publish()
 
     @Slot(bool, bool, str)
-    def update_quote(self, spanish, image, theme):
+    @Slot(bool, bool, bool, str)
+    def update_quote(self, spanish, image, title_spanish=False, theme=None):
+        # Conserva compatibilidad con la llamada anterior de tres argumentos.
+        if theme is None and isinstance(title_spanish, str):
+            theme, title_spanish = title_spanish, False
+        theme = theme or self.service.config.get('color', 'gris')
         if not self.quote_data:
             return
         if self.quote_data['translated'] and not spanish:
@@ -672,8 +896,9 @@ class Backend(QObject):
                 translated_text = translated_text or self.service.translate(text)
                 text = translated_text
             a = data['article']
+            title = a.get('titulo_es') if title_spanish and a.get('titulo_es') else a.get('titulo', '')
             img = core.create_quote_image(text, a.get('fuente',''), a['link'], spanish,
-                    title=a.get('titulo',''), color=core.THEME_PALETTE[theme]['base_fuerte'],
+                    title=title, color=core.THEME_PALETTE[theme]['base_fuerte'],
                     image_bytes=a.get('imagen') if image else None, original_language=a.get('idioma_original',''), theme=theme)
             return img, translated_text
         def done(value, error):
@@ -685,10 +910,23 @@ class Backend(QObject):
             else:
                 self.quote_image, self.quote_translation = value
                 out = io.BytesIO()
-                self.quote_image.save(out, 'PNG')
+                # La vista previa puede ser más liviana; el archivo exportado
+                # conserva la imagen maestra de 2160 px sin reescalarla.
+                preview = self.quote_image.copy()
+                preview.thumbnail((1080, 1080), Image.Resampling.LANCZOS)
+                preview.save(out, 'PNG')
                 self.quote_preview = self.service.image_url(out.getvalue())
             self.publish()
-        self.background(work, done)
+        # La cita original no requiere red: producirla de inmediato evita una
+        # vista previa innecesariamente tardía. Las traducciones siguen fuera
+        # del hilo de interfaz porque pueden solicitar red.
+        if not spanish:
+            try:
+                done(work(), None)
+            except Exception as error:
+                done(None, str(error))
+        else:
+            self.background(work, done)
 
     @Slot(str)
     def export_quote(self, url):
@@ -699,7 +937,7 @@ class Backend(QObject):
             return
         try:
             if Path(path).suffix.lower() in {'.jpg','.jpeg'}:
-                self.quote_image.convert('RGB').save(path, 'JPEG', quality=95, subsampling=0)
+                self.quote_image.convert('RGB').save(path, 'JPEG', quality=98, subsampling=0, optimize=True)
             else:
                 if not Path(path).suffix:
                     path += '.png'
@@ -824,6 +1062,9 @@ class Backend(QObject):
             snapshot = self.service.reader_store.read(self.reader['link'])
             self.marks = [tuple(mark) for mark in snapshot['translated_marks' if self.translated else 'original_marks']]
         self.render_document()
+        if self.reader and self.reader_body and self.resume_link == self.reader['link']:
+            self.resume_link = None
+            self.resume_reading()
 
     def persist_marks(self):
         if self._document_key:

@@ -22,7 +22,10 @@ def run():
     args = parser.parse_args()
     os.environ.setdefault('QT_QUICK_CONTROLS_STYLE', 'Basic')
     app = QGuiApplication.instance() or QGuiApplication(sys.argv[:1])
-    app.setApplicationName('Choroy Reader')
+    from .about import load_about
+    app_info = load_about(Path(__file__).resolve().parent.parent / 'assets')
+    app.setApplicationName(app_info['name'])
+    app.setApplicationVersion(app_info['version'])
     app.setOrganizationName('Choroy Reader')
     project = Path(__file__).resolve().parent.parent
     config_root = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))

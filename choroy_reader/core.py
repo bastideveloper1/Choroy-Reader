@@ -12,6 +12,7 @@ from html import unescape
 from html.parser import HTMLParser
 from datetime import datetime
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
@@ -172,11 +173,6 @@ THEME_PALETTE = {
 THEME_NAMES = {
     "periodico": "Claro periódico",
     "gris": "Gris minimalista",
-    "morado_neon": "Lila eléctrico",
-    "azul_neon": "Azul ártico",
-    "amarillo_neon": "Amarillo solar",
-    "verde_neon": "Verde menta",
-    "rosa_neon": "Rosa cerezo japonés",
 }
 
 THEME_PALETTE["periodico"] = {
@@ -570,14 +566,15 @@ def relative_date(date):
     return date.strftime("%d %b %Y")
 
 def create_quote_image(excerpt, source, link, translated=False, title="", color="#b9a0ff", image_bytes=None, original_language="", theme="gris") :
-    """Genera una cita cuadrada con texto ajustado y atribución."""
+    """Genera una cita cuadrada de alta resolución para publicar."""
     light = theme == "periodico"
-    image = Image.new("RGB", (1080, 1080), "#e6e6e6" if light else "#171b20")
+    scale = 2  # 2160 px conserva nitidez tras la compresión de redes sociales.
+    image = Image.new("RGB", (1080 * scale, 1080 * scale), "#e6e6e6" if light else "#171b20")
     drawing = ImageDraw.Draw(image)
     path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     def font_size(size):
         try:
-            return ImageFont.truetype(path, size)
+            return ImageFont.truetype(path, size * scale)
         except OSError:
             return ImageFont.load_default()
     def wrap_text(text, font, width):
@@ -593,33 +590,51 @@ def create_quote_image(excerpt, source, link, translated=False, title="", color=
             lines.append(line)
         return lines
     try:
-        title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+        title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30 * scale)
     except OSError:
         title_font = font_size(30)
-    title_lines = wrap_text(title, title_font, 880)
-    title_divider = 205 + len(title_lines) * 40 + 16
-    quote_y = title_divider + 44
+    text_width = 880 * scale
+    title_lines = wrap_text(title, title_font, text_width)
+    title_divider = (205 + len(title_lines) * 40 + 16) * scale
+    quote_y = title_divider + 44 * scale
     if image_bytes:
         with Image.open(io.BytesIO(image_bytes)) as cover:
-            image.paste(ImageOps.fit(cover.convert("RGB"), (880, 240)), (94, quote_y))
-        quote_y += 266
-    spacing = max(200, 885 - quote_y)
+            cover = ImageOps.fit(cover.convert("RGB"), (880 * scale, 240 * scale), method=Image.Resampling.LANCZOS)
+            image.paste(cover, (94 * scale, quote_y))
+        quote_y += 266 * scale
+    spacing = max(200 * scale, 885 * scale - quote_y)
     for size in range(48, 15, -2):
         font = font_size(size)
-        lines = wrap_text(excerpt, font, 880)
-        if len(lines) * (size + 14) <= spacing and all(drawing.textlength(l, font=font) <= 880 for l in lines):
+        lines = wrap_text(excerpt, font, text_width)
+        if len(lines) * ((size + 14) * scale) <= spacing and all(drawing.textlength(l, font=font) <= text_width for l in lines):
             break
-    drawing.rounded_rectangle((48, 48, 1032, 1032), radius=28, outline="#394453", width=2)
-    drawing.rectangle((94, 108, 150, 114), fill=color)
-    drawing.text((94, 145), "CITA EXTRAÍDA DEL ARTÍCULO", font=font_size(20), fill=color)
-    drawing.multiline_text((94, 205), "\n".join(title_lines), font=title_font, fill=color, spacing=10)
-    drawing.line((94, title_divider, 986, title_divider), fill="#adadad" if light else "#515b6a", width=2)
-    drawing.multiline_text((94, quote_y), "\n".join(lines), font=font, fill="#202020" if light else "#edf1f7", spacing=14)
-    drawing.line((94, 920, 986, 920), fill="#394453", width=2)
+    drawing.rounded_rectangle((48 * scale, 48 * scale, 1032 * scale, 1032 * scale), radius=28 * scale, outline="#394453", width=2 * scale)
+    drawing.rectangle((94 * scale, 108 * scale, 150 * scale, 114 * scale), fill=color)
+    drawing.text((94 * scale, 145 * scale), "CITA EXTRAÍDA DEL ARTÍCULO", font=font_size(20), fill=color)
+    drawing.multiline_text((94 * scale, 205 * scale), "\n".join(title_lines), font=title_font, fill=color, spacing=10 * scale)
+    drawing.line((94 * scale, title_divider, 986 * scale, title_divider), fill="#adadad" if light else "#515b6a", width=2 * scale)
+    drawing.multiline_text((94 * scale, quote_y), "\n".join(lines), font=font, fill="#202020" if light else "#edf1f7", spacing=14 * scale)
+    drawing.line((94 * scale, 920 * scale, 986 * scale, 920 * scale), fill="#394453", width=2 * scale)
     language = {"en": "inglés", "es": "español"}.get(original_language)
     origin = "Versión original en " + language if language else "Versión original"
     attribution = source[:45] + " · " + origin
-    drawing.text((94, 944), attribution, font=font_size(18), fill="#202020" if light else "#dbe1e9")
-    drawing.text((94, 978), urllib.parse.urlparse(link).netloc[:75], font=font_size(17), fill="#8793a3")
+    drawing.text((94 * scale, 944 * scale), attribution, font=font_size(18), fill="#202020" if light else "#dbe1e9")
+    drawing.text((94 * scale, 978 * scale), urllib.parse.urlparse(link).netloc[:75], font=font_size(17), fill="#8793a3")
+
+    # Sello discreto: se incorpora al archivo final, no solo a la vista previa.
+    seal_font = font_size(15)
+    seal_text = "CHOROY READER"
+    seal_size = 34 * scale
+    seal_x = 986 * scale - int(drawing.textlength(seal_text, font=seal_font)) - seal_size - 10 * scale
+    seal_y = 950 * scale
+    logo_path = Path(__file__).resolve().parent.parent / "assets" / "choroy_reader_logo.png"
+    try:
+        with Image.open(logo_path) as logo:
+            logo = logo.convert("RGBA")
+            logo.thumbnail((seal_size, seal_size), Image.Resampling.LANCZOS)
+            image.paste(logo, (seal_x, seal_y), logo)
+    except (OSError, ValueError):
+        pass
+    drawing.text((seal_x + seal_size + 10 * scale, seal_y + 6 * scale), seal_text, font=seal_font, fill="#525b67" if light else "#9da9b8")
     image.info["articulo"] = link
     return image

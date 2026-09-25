@@ -1,0 +1,110 @@
+[
+  {
+    "name": "PySide6",
+    "version": "6.11.2",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
+    "url": "https://doc.qt.io/qtforpython-6/licenses.html",
+    "files": [
+      "LGPL-3.0.txt",
+      "GPL-2.0.txt",
+      "GPL-3.0.txt"
+    ]
+  },
+  {
+    "name": "PySide6_Essentials",
+    "version": "6.11.2",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
+    "url": "https://doc.qt.io/qtforpython-6/licenses.html",
+    "files": [
+      "LGPL-3.0.txt",
+      "GPL-2.0.txt",
+      "GPL-3.0.txt"
+    ]
+  },
+  {
+    "name": "PySide6_Addons",
+    "version": "6.11.2",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
+    "url": "https://doc.qt.io/qtforpython-6/licenses.html",
+    "files": [
+      "LGPL-3.0.txt",
+      "GPL-2.0.txt",
+      "GPL-3.0.txt"
+    ]
+  },
+  {
+    "name": "shiboken6",
+    "version": "6.11.2",
+    "license": "LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only",
+    "url": "https://doc.qt.io/qtforpython-6/licenses.html",
+    "files": [
+      "LGPL-3.0.txt",
+      "GPL-2.0.txt",
+      "GPL-3.0.txt"
+    ]
+  },
+  {
+    "name": "Pillow",
+    "version": "10.2.0",
+    "license": "HPND",
+    "url": "https://github.com/python-pillow/Pillow",
+    "files": [
+      "Pillow-0-copyright.txt"
+    ]
+  },
+  {
+    "name": "beautifulsoup4",
+    "version": "4.12.3",
+    "license": "MIT License",
+    "url": "https://www.crummy.com/software/BeautifulSoup/",
+    "files": [
+      "beautifulsoup4-0-copyright.txt"
+    ]
+  },
+  {
+    "name": "soupsieve",
+    "version": "2.5",
+    "license": "MIT",
+    "url": "https://github.com/facelessuser/soupsieve",
+    "files": [
+      "soupsieve-0-copyright.txt"
+    ]
+  },
+  {
+    "name": "typing_extensions",
+    "version": "4.10.0",
+    "license": "Ver avisos incluidos",
+    "url": "https://github.com/python/typing_extensions",
+    "files": [
+      "typing_extensions-0-copyright.txt"
+    ]
+  },
+  {
+    "name": "Python",
+    "version": "3.12.3",
+    "license": "PSF y avisos de terceros",
+    "url": "https://docs.python.org/3/license.html",
+    "files": [
+      "Python.txt"
+    ]
+  },
+  {
+    "name": "Qt",
+    "version": "6.11.2",
+    "license": "LGPL-3.0 / GPL; véanse los módulos distribuidos",
+    "url": "https://doc.qt.io/qt-6/licenses-used-in-qt.html",
+    "files": [
+      "LGPL-3.0.txt",
+      "GPL-3.0.txt"
+    ]
+  },
+  {
+    "name": "SQLite",
+    "version": "3.45.1",
+    "license": "Dominio público; ver aviso",
+    "url": "https://www.sqlite.org/copyright.html",
+    "files": [
+      "SQLite.txt"
+    ]
+  }
+]

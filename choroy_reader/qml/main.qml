@@ -14,6 +14,7 @@ ApplicationWindow {
     property var p: s.palette
     property real feed_scroll: 0
     property bool sidebar_visible: true
+    property bool settings_open: false
     property var expanded_categories: ({})
     color: p.bg
     font.family: "Sans Serif"
@@ -26,14 +27,15 @@ ApplicationWindow {
         property bool compact: false
         property string symbol: ""
         property bool warning: false
+        property bool shortcut: false
         property string favicon: ""
         leftPadding: 12; rightPadding: 12; topPadding: compact ? 5 : 9; bottomPadding: compact ? 5 : 9
         implicitHeight: Math.max(32, contentItem.implicitHeight + topPadding + bottomPadding)
-        background: Rectangle { radius: 6; color: control.warning ? (p.light ? "#f0dcdc" : "#39272a") : control.down ? Qt.lighter(p.hover, 1.35) : control.hovered ? Qt.lighter(p.hover, 1.2) : control.active ? p.hover : "transparent"; border.color: control.visualFocus ? p.accent : "transparent" }
+        background: Rectangle { radius: 6; color: control.warning ? (p.light ? "#f0dcdc" : "#39272a") : control.down ? Qt.lighter(p.hover, 1.35) : control.hovered ? Qt.lighter(p.hover, 1.2) : control.shortcut ? (p.light ? "#e2f5ff" : "#123248") : control.active ? p.hover : "transparent"; border.color: control.shortcut ? "#42b8e8" : control.visualFocus ? p.accent : "transparent" }
         contentItem: RowLayout { spacing: 10
             Image { visible: control.favicon.length > 0; source: control.favicon; Layout.preferredWidth: 18; Layout.preferredHeight: 18; fillMode: Image.PreserveAspectFit; smooth: true; mipmap: true }
             Glyph { visible: control.symbol.length > 0; kind: control.symbol; ink: p.accent; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
-            Text { Layout.fillWidth: true; text: control.text; color: !control.enabled ? p.muted : control.active ? p.accent : p.text; font: control.font; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
+            Text { Layout.fillWidth: true; text: control.text; color: !control.enabled ? p.muted : control.shortcut ? (p.light ? "#087dab" : "#8addff") : control.active ? p.accent : p.text; font: control.font; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
         }
     }
     component Search: TextField {
@@ -177,16 +179,17 @@ ApplicationWindow {
                         ColumnLayout {
                             width: side_scroll.availableWidth; spacing: 4
                             Action { objectName: "articlesNavigation"; Layout.preferredHeight: 38; symbol: "articles"; text: "Todos los artículos"; active: s.page === "feed" && s.category === ""; Layout.fillWidth: true; Layout.margins: 14; onClicked: backend.navigate("feed", "", "") }
+                            Label { text: "BIBLIOTECA"; color: p.muted; font.pixelSize: 10; font.bold: true; Layout.leftMargin: 22; Layout.topMargin: 2; Layout.bottomMargin: 2 }
                             Action { symbol: "save"; text: "Guardados"; active: s.page === "guardados"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("guardados", "", "") }
                             Action { symbol: "articles"; text: "Historial"; active: s.page === "historial"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("historial", "", "") }
                             Action { symbol: "archive"; text: "Archivados"; active: s.page === "archivados"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("archivados", "", "") }
                             Action { symbol: "download"; text: "Descargas"; active: s.page === "descargas"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("descargas", "", "") }
                             RowLayout {
-                                Layout.fillWidth: true; Layout.margins: 18
+                                Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
                                 Label { text: "Radar de intereses"; color: p.text; Layout.fillWidth: true }
                                 Switch {
                                     id: radar_switch; objectName: "radar_switch"; checked: s.radar; onClicked: backend.toggle_radar(); padding: 0
-                                    indicator: Rectangle { width: 42; height: 24; radius: 12; color: radar_switch.checked ? ((s.theme === "gris" || s.theme === "periodico") ? "#62834b" : p.accent) : "#777b82"
+                                    indicator: Rectangle { width: 42; height: 24; radius: 12; color: radar_switch.checked ? "#62834b" : "#777b82"
                                         Rectangle { x: radar_switch.checked ? 21 : 3; y: 3; width: 18; height: 18; radius: 9; color: "#f0f0f0"; Behavior on x { NumberAnimation { duration: 110 } } }
                                     }
                                 }
@@ -206,10 +209,10 @@ ApplicationWindow {
                                             delegate: Action {
                                                 id: source_button
                                                 required property var modelData
-                                                text: modelData.name + (modelData.shortcut ? " ↗" : modelData.no_feed ? " · Sin feed" : "")
-                                                favicon: modelData.icon; warning: modelData.no_feed; compact: true
+                                                text: modelData.name + (modelData.direct_access ? " ↗" : modelData.no_feed ? " · Sin feed" : "")
+                                                favicon: modelData.icon; warning: modelData.no_feed; shortcut: modelData.direct_access; compact: true
                                                 active: s.source === modelData.url; Layout.fillWidth: true
-                                                onClicked: modelData.shortcut ? backend.open_url(modelData.url) : backend.navigate("feed",category_delegate.modelData.name,modelData.url)
+                                                onClicked: modelData.direct_access ? backend.open_url(modelData.url) : backend.navigate("feed",category_delegate.modelData.name,modelData.url)
                                                 TapHandler { acceptedButtons: Qt.RightButton; onTapped: source_menu.popup() }
                                                 Menu {
                                                     id: source_menu
@@ -227,13 +230,27 @@ ApplicationWindow {
                     Rectangle { Layout.fillWidth: true; Layout.margins: 18; height: 1; color: p.border }
                     ColumnLayout {
                         Layout.fillWidth: true; Layout.margins: 14; Layout.alignment: Qt.AlignTop; spacing: 1
-                        Label {
-                            text: "CONFIGURACIÓN"; color: p.muted; font.pixelSize: 10; font.bold: true
-                            Layout.leftMargin: 12; Layout.bottomMargin: 5
+                        Item {
+                            id: settings_drawer; Layout.fillWidth: true
+                            Layout.preferredHeight: window.settings_open ? settings_menu.implicitHeight : 0
+                            opacity: window.settings_open ? 1 : 0; clip: true
+                            Behavior on Layout.preferredHeight { NumberAnimation { duration: 190; easing.type: Easing.OutCubic } }
+                            Behavior on opacity { NumberAnimation { duration: 130 } }
+                            ColumnLayout {
+                                id: settings_menu; width: parent.width; spacing: 1
+                                Action { objectName: "designNavigation"; Layout.preferredHeight: 38; text: "Diseño"; active: s.page === "design"; Layout.fillWidth: true; onClicked: backend.navigate("design", "", "") }
+                                Action { text: "Gestionar fuentes y categorías"; active: s.page === "sources"; Layout.fillWidth: true; onClicked: backend.navigate("sources", "", "") }
+                                Action { text: "Configurar radar"; active: s.page === "radar"; Layout.fillWidth: true; onClicked: backend.navigate("radar", "", "") }
+                                Action { text: "Almacenamiento"; active: s.page === "storage"; Layout.fillWidth: true; onClicked: backend.navigate("storage", "", "") }
+                                Action { text: "Acerca de Choroy Reader"; active: s.page === "about"; Layout.fillWidth: true; onClicked: backend.navigate("about", "", "") }
+                            }
                         }
-                        Action { objectName: "designNavigation"; Layout.preferredHeight: 38; text: "Diseño"; active: s.page === "design"; Layout.fillWidth: true; onClicked: backend.navigate("design", "", "") }
-                        Action { text: "Gestionar fuentes y categorías"; active: s.page === "sources"; Layout.fillWidth: true; onClicked: backend.navigate("sources", "", "") }
-                        Action { text: "Configurar radar"; active: s.page === "radar"; Layout.fillWidth: true; onClicked: backend.navigate("radar", "", "") }
+                        Action {
+                            objectName: "settingsToggle"; Layout.preferredHeight: 38
+                            text: (window.settings_open ? "⌃  " : "⌄  ") + "Configuración"
+                            active: window.settings_open || s.page === "design" || s.page === "sources" || s.page === "radar" || s.page === "storage" || s.page === "about"
+                            Layout.fillWidth: true; onClicked: window.settings_open = !window.settings_open
+                        }
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; height: 1; color: p.border }
                     RowLayout {
@@ -271,7 +288,7 @@ ApplicationWindow {
             }
             Loader {
                 id: main_loader; Layout.fillWidth: true; Layout.fillHeight: true
-                sourceComponent: s.reader.link ? reader_page : s.page === "design" ? design_page : s.page === "radar" ? radar_page : s.page === "sources" ? sources_page : feed_page
+                sourceComponent: s.reader.link ? reader_page : s.page === "about" ? about_page : s.page === "storage" ? storage_page : s.page === "design" ? design_page : s.page === "radar" ? radar_page : s.page === "sources" ? sources_page : feed_page
             }
         }
     }
@@ -320,36 +337,6 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                         }
-                    }
-                }
-                Button {
-                    id: mark_all_button; objectName: "markAllReadButton"
-                    Layout.preferredHeight: 38; leftPadding: 12; rightPadding: 12
-                    text: "Leídos ▾"
-                    topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
-                    Accessible.name: "Marcar todos como leídos"
-                    ToolTip.visible: hovered; ToolTip.text: Accessible.name
-                    background: Rectangle {
-                        radius: 10; color: mark_all_button.hovered ? "#343a40" : "#24282d"
-                        border.color: mark_all_button.visualFocus ? p.accent : "#50565e"
-                    }
-                    contentItem: Text {
-                        text: mark_all_button.text; color: "#ffffff"; font.bold: true
-                        horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                    }
-                    onClicked: read_scope_menu.popup()
-                    Menu {
-                        id: read_scope_menu
-                        MenuItem { text: "Marcar todos como leídos"; enabled: false }
-                        MenuSeparator {}
-                        MenuItem {
-                            visible: !!s.read_undo.count; height: visible ? implicitHeight : 0
-                            text: "Deshacer · " + (s.read_undo.scope || "")
-                            onTriggered: backend.undo_mark_all_read()
-                        }
-                        MenuItem { text: "Esta fuente…"; visible: s.source.length > 0; height: visible ? implicitHeight : 0; onTriggered: { backend.prepare_mark_all_read("source"); bulk_read_dialog.open(); } }
-                        MenuItem { text: "Esta categoría…"; visible: s.category.length > 0; height: visible ? implicitHeight : 0; onTriggered: { backend.prepare_mark_all_read("category"); bulk_read_dialog.open(); } }
-                        MenuItem { text: "Biblioteca completa…"; onTriggered: { backend.prepare_mark_all_read("library"); bulk_read_dialog.open(); } }
                     }
                 }
                 Button {
@@ -430,7 +417,7 @@ ApplicationWindow {
                         Repeater { model: s.link_sources
                             delegate: Action {
                                 required property var modelData
-                                text: modelData.name + " ↗"; favicon: modelData.icon; warning: modelData.no_feed; compact: true
+                                text: modelData.name + " ↗"; favicon: modelData.icon; warning: modelData.no_feed; shortcut: modelData.direct_access; compact: true
                                 onClicked: backend.open_url(modelData.url)
                                 ToolTip.visible: hovered
                                 ToolTip.text: modelData.no_feed ? "Sin feed detectado · Abrir sitio web" : "Atajo web · Abrir sitio"
@@ -447,6 +434,17 @@ ApplicationWindow {
                 }
             }
             Label { text: s.page === "descargas" ? "Descargas · Sin conexión" : s.page === "guardados" ? "Guardados" : s.page === "archivados" ? "Archivados" : s.page === "historial" ? "Historial" : s.page === "retirados" ? "Historial retirado · Recuperable durante 30 días" : s.category; visible: text.length > 0; color: p.accent; font.bold: true; Layout.leftMargin: 18 }
+            RowLayout {
+                visible: s.page === "guardados"; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 8
+                Label { text: "Colección"; color: p.muted }
+                ComboBox {
+                    id: collection_filter; model: s.collections; textRole: "name"; Layout.fillWidth: true
+                    currentIndex: Math.max(0, s.collections.findIndex(function(item) { return item.id === s.collection_filter; }))
+                    onActivated: backend.set_collection_filter(model[currentIndex].id)
+                }
+                Action { text: "+ Colección"; compact: true; active: true; onClicked: { collection_name.text=""; collection_dialog.open(); } }
+                Action { text: "Eliminar"; compact: true; visible: s.collection_filter.length > 0; onClicked: backend.delete_collection(s.collection_filter) }
+            }
             Action {text: "Abrir sitio de la fuente ↗"; visible:s.source.length>0; Layout.leftMargin:18; compact:true; onClicked:backend.open_url(s.source)}
             Label {
                 visible: s.page === "historial"
@@ -461,7 +459,7 @@ ApplicationWindow {
                     GridLayout {
                         id: cards_grid;
                         property real card_height: children.reduce(function(height, child) { return Math.max(height, child.implicitHeight || 0); }, 0)
-                         Layout.fillWidth: true; Layout.margins: 12; columns: Math.max(1,Math.min(s.columns,Math.floor((feed_scroll_view.availableWidth-24)/240))); columnSpacing: 8; rowSpacing: 8
+                         Layout.fillWidth: true; Layout.margins: 12; columns: Math.max(1,Math.min(s.columns,Math.floor((feed_scroll_view.availableWidth-24)/290))); columnSpacing: 8; rowSpacing: 8
                         Repeater {
                             model: s.articles
                             delegate: Rectangle {
@@ -512,11 +510,6 @@ ApplicationWindow {
                                             Text { text: card.modelData.translation_html; textFormat: Text.RichText; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; font.pixelSize: 13 }
                                         }
                                         Action { visible: s.page === "retirados"; text: "Recuperar historial"; active: true; Layout.fillWidth: true; onClicked: backend.restore_history(card.modelData.link) }
-                                        Label {
-                                            visible: card.modelData.reading_progress.position !== undefined
-                                            text: "Continuar lectura · " + (card.modelData.reading_progress.percent || 0) + "%"
-                                            color: p.muted; font.pixelSize: 11; Layout.fillWidth: true
-                                        }
                                         Label { visible: card.modelData.dismissed; text: "Descartado · No me interesa"; color: p.muted; font.bold: true; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
                                         Item { Layout.fillHeight: true; Layout.minimumHeight: 0 }
                                         Item { Layout.fillWidth: true; Layout.preferredHeight: 34 }
@@ -557,12 +550,7 @@ ApplicationWindow {
                     IconAction { kind: s.reader.downloaded ? "delete" : "download"; filled: !!s.reader.downloaded; enabled: !s.reader.downloading; hint: filled ? "Eliminar descarga" : "Descargar"; onClicked: backend.toggle_download(s.reader.link) }
                     RadarBadge { objectName: "readerRadarBadge"; article: s.reader; visible: s.radar; Layout.minimumWidth: 100 }
                 }
-                RowLayout {
-                    visible: s.reader.reading_progress && s.reader.reading_progress.position !== undefined
-                    Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
-                    Label { text: "Punto de lectura guardado · " + (s.reader.reading_progress ? s.reader.reading_progress.percent || 0 : 0) + "%"; color: p.accent; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                    Action { objectName: "resumeReadingButton"; text: "Continuar desde aquí"; active: true; enabled: s.reader.ready; onClicked: backend.resume_reading() }
-                }
+                Action { text: "Colecciones"; visible: s.reader.saved; compact: true; Layout.leftMargin: 18; onClicked: { article_collections.article_link=s.reader.link; article_collections.open(); } }
                 SectionTitle { text: s.reader.title || ""; font.pixelSize: 23; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
                 Label { text: (reader_scroll.marking ? "Destacador activo · Arrastra para marcar. " : "") + (s.reader.status || ""); color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
                 TextEdit {
@@ -602,7 +590,6 @@ ApplicationWindow {
                     Menu {
                         id: article_menu
                         MenuItem { text: "Guardar punto de lectura aquí"; onTriggered: backend.save_reading_position(reader_scroll.menu_position) }
-                        MenuSeparator {}
                         MenuItem { text: "Crear imagen de la cita…"; enabled: reader_scroll.selected_quote.length > 0; onTriggered: {backend.prepare_quote(reader_scroll.selected_quote);if(reader_scroll.selected_quote.length<=500)quote_dialog.open();} }
                         Menu {
                             title: "Destacador"
@@ -637,6 +624,142 @@ ApplicationWindow {
             }
             Label { id: search_count; color: p.muted; font.pixelSize: 10; anchors.right: parent.right; anchors.top: parent.top }
         }
+    }
+
+    Component {
+        id: about_page
+        ScrollView {
+            id: about_scroll; objectName: "aboutPage"; clip: true; contentWidth: availableWidth
+            ColumnLayout {
+                width: about_scroll.availableWidth; spacing: 12
+                RowLayout {
+                    Layout.fillWidth: true; Layout.margins: 18; spacing: 14
+                    Image { source: s.logo; Layout.preferredWidth: 64; Layout.preferredHeight: 64; fillMode: Image.PreserveAspectFit }
+                    ColumnLayout {
+                        SectionTitle { text: s.about.name; font.pixelSize: 24 }
+                        Label { text: "Versión " + s.about.version + " · " + s.about.stage; color: p.accent }
+                    }
+                }
+                Label { text: s.about.description; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { text: "Autor: " + s.about.author + "\n" + s.about.location + " · GitHub: " + s.about.github; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { text: "Licencia de Choroy Reader: " + s.about.license; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Flow {
+                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 6
+                    Action { text: "Repositorio ↗"; active: true; onClicked: backend.open_url(s.about.repository) }
+                    Action { text: "Reportar un error ↗"; active: true; onClicked: backend.open_url(s.about.issues) }
+                }
+                SectionTitle { text: "Créditos"; Layout.leftMargin: 18 }
+                Repeater {
+                    model: s.about.credits
+                    Label { required property string modelData; text: modelData; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                }
+                SectionTitle { text: "Dependencias y licencias"; Layout.leftMargin: 18 }
+                Label { text: "Avisos incluidos con esta versión. Pulsa una dependencia para leer los textos sin conexión."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Repeater {
+                    model: s.about.dependencies
+                    delegate: Rectangle {
+                        required property var modelData; required property int index
+                        Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                        implicitHeight: dependency_row.implicitHeight + 12
+                        radius: 8; color: p.panel; border.color: p.border
+                        RowLayout {
+                            id: dependency_row; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6
+                            Action { text: modelData.name + " · " + modelData.version + "\n" + modelData.license; Layout.fillWidth: true; onClicked: { backend.show_dependency_license(index); license_dialog.open(); } }
+                            Action { text: "↗"; visible: modelData.url.length > 0; Accessible.name: "Sitio de " + modelData.name; onClicked: backend.open_url(modelData.url) }
+                        }
+                    }
+                }
+                Item { Layout.preferredHeight: 18 }
+            }
+        }
+    }
+    Component {
+        id: storage_page
+        ScrollView {
+            id: storage_scroll; objectName: "storagePage"; clip: true; contentWidth: availableWidth
+            ColumnLayout {
+                width: storage_scroll.availableWidth; spacing: 14
+                SectionTitle { text: "Almacenamiento"; Layout.margins: 18 }
+                Label {
+                    text: "Revisa qué ocupa espacio en Choroy Reader y libera solo archivos que la aplicación puede recrear.";
+                    color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                }
+                Rectangle {
+                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                    implicitHeight: storage_totals.implicitHeight + 24; radius: 10; color: p.panel; border.color: p.border
+                    ColumnLayout {
+                        id: storage_totals; anchors.fill: parent; anchors.margins: 12; spacing: 4
+                        Label { text: "Datos del usuario"; color: p.muted; font.pixelSize: 11 }
+                        Label { text: s.storage.user_total; color: p.accent; font.pixelSize: 24; font.bold: true }
+                        Label { text: s.storage.data_path; color: p.text; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true; textFormat: Text.PlainText }
+                        Label { text: s.storage.installation_shared ? "Esta ejecución comparte carpeta con sus datos; por eso no se suma una instalación separada." : "Los archivos de instalación se conservan aparte: " + s.storage.installation_total; color: p.muted; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    }
+                }
+                SectionTitle { text: "Uso de datos"; Layout.leftMargin: 18 }
+                Repeater {
+                    model: [
+                        { name: "Base de datos", value: s.storage.database, detail: "Estado de lectura, progreso y destacados." },
+                        { name: "Artículos", value: s.storage.articles, detail: "Feed, guardados, descargas, historial y archivados." },
+                        { name: "Imágenes", value: s.storage.images, detail: "Portadas generadas para mostrar en la aplicación." },
+                        { name: "Caché", value: s.storage.cache, detail: "Favicons y archivos temporales regenerables." },
+                        { name: "Otros datos", value: s.storage.other, detail: "Configuración y archivos de usuario restantes." }
+                    ]
+                    delegate: Rectangle {
+                        required property var modelData
+                        Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                        implicitHeight: storage_row.implicitHeight + 18; radius: 8; color: p.panel; border.color: p.border
+                        RowLayout {
+                            id: storage_row; anchors.fill: parent; anchors.margins: 9; spacing: 10
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 2
+                                Label { text: modelData.name; color: p.text; font.bold: true }
+                                Label { text: modelData.detail; color: p.muted; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            }
+                            Label { text: modelData.value; color: p.accent; font.bold: true; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
+                        }
+                    }
+                }
+                SectionTitle { text: "Limpieza segura"; Layout.leftMargin: 18; Layout.topMargin: 4 }
+                Label {
+                    text: s.storage.recoverable_bytes > 0 ? "Puedes recuperar aproximadamente " + s.storage.recoverable + ". Se conservarán tus fuentes, configuración, artículos, descargas y base de datos." : "No hay caché regenerable para limpiar.";
+                    color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                }
+                RowLayout {
+                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 8
+                    Action { text: "Actualizar tamaños"; Layout.fillWidth: true; onClicked: backend.refresh_storage() }
+                    Action { text: "Limpiar caché (" + s.storage.recoverable + ")"; active: true; enabled: s.storage.recoverable_bytes > 0; Layout.fillWidth: true; onClicked: clear_cache_dialog.open() }
+                }
+                Label { text: (s.storage.installation_shared ? "Carpeta compartida: " : "Instalación: ") + s.storage.installation_path; color: p.muted; font.pixelSize: 10; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Item { Layout.preferredHeight: 18 }
+            }
+        }
+    }
+    Dialog {
+        id: clear_cache_dialog; objectName: "clearCacheDialog"; anchors.centerIn: parent; modal: true
+        width: Math.min(520, window.width - 40); title: "Limpiar caché"
+        background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
+        contentItem: Label {
+            text: "Se eliminarán " + s.storage.recoverable + " de imágenes, favicons y archivos temporales que Choroy Reader puede descargar o generar de nuevo. Tus artículos, descargas, fuentes y configuración no se modificarán.";
+            color: p.text; wrapMode: Text.Wrap; padding: 18
+        }
+        footer: RowLayout {
+            Item { Layout.fillWidth: true }
+            Action { text: "Cancelar"; onClicked: clear_cache_dialog.close() }
+            Action { text: "Limpiar caché"; active: true; onClicked: { backend.clear_storage_cache(); clear_cache_dialog.close(); } }
+            Item { width: 8 }
+        }
+    }
+    Dialog {
+        id: license_dialog; objectName: "licenseDialog"; anchors.centerIn: parent; modal: true
+        width: Math.min(760, window.width - 40); height: Math.min(580, window.height - 40)
+        title: s.notice_title
+        background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
+        header: Label { text: license_dialog.title; color: p.text; font.bold: true; padding: 16 }
+        contentItem: ScrollView {
+            id: license_scroll; clip: true; contentWidth: availableWidth
+            TextArea { width: license_scroll.availableWidth; text: s.notice_body; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: p.text; selectionColor: p.accent; selectedTextColor: p.accent_text; background: Item {} }
+        }
+        footer: Action { text: "Cerrar"; onClicked: license_dialog.close() }
     }
 
     Component {
@@ -743,22 +866,6 @@ ApplicationWindow {
     }
 
     Dialog {
-        id: bulk_read_dialog; anchors.centerIn: parent; modal: true
-        title: "Marcar todos como leídos"; width: Math.min(460, window.width - 40)
-        background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
-        header: Label { text: bulk_read_dialog.title; color: p.text; font.bold: true; padding: 16 }
-        contentItem: ColumnLayout {
-            Label { text: s.read_scope; color: p.accent; font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Label { text: s.read_batch_count + " artículos no leídos. Incluye los artículos almacenados del alcance elegido, también guardados, archivados y descargas, sin limitarse a la búsqueda ni al período del feed."; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            Label { text: "Podrás deshacer esta operación. Una nueva operación reemplaza el deshacer anterior."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
-            RowLayout {
-                Action { text: "Cancelar"; onClicked: bulk_read_dialog.close() }
-                Action { text: "Marcar como leídos"; active: true; enabled: s.read_batch_count > 0; onClicked: { backend.mark_all_read(); bulk_read_dialog.close(); } }
-            }
-        }
-    }
-
-    Dialog {
         id: equivalents_dialog; anchors.centerIn: parent; modal: true
         property string word: ""
         title: "Equivalencias de " + word
@@ -786,8 +893,8 @@ ApplicationWindow {
                     Label { text: "Mostrar artículos de"; color: p.text }
                     SettingsChoice {
                         id: period_selector; objectName: "articlePeriodSelector"
-                        property var keys: ["hoy", "semana", "mes", "ano"]
-                        model: ["Hoy", "Últimos 7 días", "Últimos 30 días", "Este año"]
+                        property var keys: ["hoy", "dos_dias", "semana", "mes", "ano"]
+                        model: ["Hoy", "Últimos 2 días", "Últimos 7 días", "Últimos 30 días", "Este año"]
                         currentIndex: keys.indexOf(s.article_period)
                         onActivated: backend.set_article_period(keys[currentIndex])
                         Layout.fillWidth: true
@@ -813,6 +920,24 @@ ApplicationWindow {
                     color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
                 }
                 Action { text: "Recuperar historial retirado…"; Layout.leftMargin: 18; onClicked: backend.navigate("retirados", "", "") }
+                Rectangle {
+                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                    implicitHeight: portability_controls.implicitHeight + 24
+                    radius: 8; color: p.panel; border.color: p.border
+                    ColumnLayout {
+                        id: portability_controls; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 12; spacing: 8
+                        SectionTitle { text: "Respaldo y portabilidad" }
+                        Label { text: "OPML intercambia fuentes y categorías. La copia local incluye preferencias, estados, colecciones, textos, destacados y progreso de lectura."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                        Flow {
+                            Layout.fillWidth: true; spacing: 6; enabled: s.portability_ready
+                            Action { text: "Importar OPML…"; onClicked: opml_import_file.open() }
+                            Action { text: "Exportar OPML…"; onClicked: opml_export_file.open() }
+                            Action { text: "Crear copia…"; onClicked: backup_export_file.open() }
+                            Action { text: "Restaurar copia…"; onClicked: backup_import_file.open() }
+                        }
+                        Label { visible: !s.portability_ready; text: "Espera a que finalicen las tareas en curso."; color: p.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                    }
+                }
                 Repeater { model: s.categories
                     delegate: Rectangle {
                         id: settings_cat; required property var modelData; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; implicitHeight: cat_settings.implicitHeight+20; color: p.panel; border.color: p.border; radius: 6
@@ -863,6 +988,34 @@ ApplicationWindow {
         contentItem: ColumnLayout {
             Search { id: category_name; placeholderText: "Nombre"; Layout.fillWidth: true }
             RowLayout { Action { text: "Cancelar"; onClicked: category_dialog.close() } Action { text: "Guardar"; active: true; onClicked: {backend.save_category(category_dialog.category_index,category_name.text);category_dialog.close();} } }
+        }
+    }
+    Dialog {
+        id: collection_dialog; anchors.centerIn: parent; modal: true; title: "Nueva colección"; width: Math.min(400,window.width-40)
+        background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
+        contentItem: ColumnLayout {
+            spacing: 12
+            Label { text: "Las colecciones organizan tus artículos guardados y no modifican las categorías de fuentes."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Search { id: collection_name; placeholderText: "Nombre de la colección"; Layout.fillWidth: true; onAccepted: { backend.save_collection(text); collection_dialog.close(); } }
+            RowLayout { Item { Layout.fillWidth: true } Action { text: "Cancelar"; onClicked: collection_dialog.close() } Action { text: "Crear"; active: true; onClicked: { backend.save_collection(collection_name.text); collection_dialog.close(); } } }
+        }
+    }
+    Dialog {
+        id: article_collections; property string article_link: ""; anchors.centerIn: parent; modal: true; title: "Organizar en colecciones"; width: Math.min(440,window.width-40)
+        background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
+        contentItem: ColumnLayout {
+            spacing: 8
+            Label { text: "Un artículo puede pertenecer a varias colecciones."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Repeater { model: s.collections.slice(1)
+                delegate: Check {
+                    required property var modelData
+                    text: modelData.name; Layout.fillWidth: true
+                    checked: s.reader.collections.indexOf(modelData.name) >= 0
+                    onClicked: backend.toggle_article_collection(article_collections.article_link, modelData.id)
+                }
+            }
+            Label { visible: s.collections.length <= 1; text: "Aún no hay colecciones. Créala desde Guardados."; color: p.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+            RowLayout { Item { Layout.fillWidth: true } Action { text: "Cerrar"; onClicked: article_collections.close() } }
         }
     }
     Dialog {
@@ -924,9 +1077,9 @@ ApplicationWindow {
         palette.base: "#ffffff"
         palette.highlight: "#62834b"
         palette.highlightedText: "#ffffff"
-        property bool spanish: false; property bool include_image: false; property int color_index: 0
+        property bool spanish: false; property bool title_spanish: false; property bool include_image: false; property int color_index: 0
         function regenerate() {quote_delay.restart();}
-        onOpened: {spanish=s.quote_is_translated;include_image=false;color_index=Math.max(0,s.themes.findIndex(t=>t.key===s.theme));regenerate();}
+        onOpened: {spanish=s.quote_is_translated;title_spanish=s.quote_title_has_translation && spanish;include_image=false;color_index=Math.max(0,s.themes.findIndex(t=>t.key===s.theme));regenerate();}
         background: Rectangle { color: "#dedede"; radius: 12; border.color: "#b4b4b4" }
         header: Label { text: quote_dialog.title; padding: 18; color: "#252525"; font.bold: true; font.pixelSize: 17 }
         contentItem: RowLayout {
@@ -934,6 +1087,21 @@ ApplicationWindow {
             ColumnLayout { Layout.preferredWidth: 210; Layout.alignment: Qt.AlignTop; spacing: 14
                 Button { text: quote_dialog.spanish ? "Mostrar idioma original" : "Mostrar traducción"; enabled: !s.quote_is_translated; onClicked: {quote_dialog.spanish=!quote_dialog.spanish;quote_dialog.regenerate();}
                     background: Rectangle { color: parent.hovered?"#c2c2c2":"#cccccc"; radius:6 } contentItem: Text { text:parent.text;color:"#252525";padding:10;wrapMode:Text.Wrap } Layout.fillWidth:true
+                }
+                CheckBox {
+                    id: quote_title_language; text: "Título en español"
+                    Layout.fillWidth: true; spacing: 8; enabled: s.quote_title_has_translation; checked: quote_dialog.title_spanish
+                    onClicked: { quote_dialog.title_spanish=checked; quote_dialog.regenerate(); }
+                    contentItem: Text {
+                        text: quote_title_language.text; color: quote_title_language.enabled ? "#252525" : "#686868"
+                        leftPadding: quote_title_language.indicator.width + quote_title_language.spacing
+                        wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter
+                    }
+                    indicator: Rectangle {
+                        width: 20; height: 20; y: (quote_title_language.height-height)/2; radius: 4
+                        color: quote_title_language.checked ? "#62834b" : "#eeeeee"; border.color: "#686868"
+                        Text { anchors.centerIn: parent; text: quote_title_language.checked ? "✓" : ""; color: "#ffffff" }
+                    }
                 }
                 CheckBox {
                     id: quote_image_check; text: "Incluir imagen del artículo"
@@ -955,12 +1123,35 @@ ApplicationWindow {
                     background:Rectangle { color:s.themes[quote_dialog.color_index].key==="periodico"?"#e6e6e6":"#232a34";radius:6 }
                     contentItem:Text {text:parent.text;color:s.themes[quote_dialog.color_index].color;wrapMode:Text.Wrap;padding:10}
                 }
-                Label { text:s.quote_busy?"Actualizando vista previa…":s.quote_is_translated?"Para citar el original exacto, selecciona el texto en Ver original.":"Vista previa · PNG o JPG"; color:"#555555"; wrapMode:Text.Wrap; Layout.fillWidth:true }
+                Label { text:s.quote_busy?"Actualizando vista previa…":s.quote_is_translated?"Para citar el original exacto, selecciona el texto en Ver original.":"Vista previa · 2160 × 2160 · PNG o JPG"; color:"#555555"; wrapMode:Text.Wrap; Layout.fillWidth:true }
             }
             Image { source:s.quote_preview; Layout.fillWidth:true; Layout.fillHeight:true; fillMode:Image.PreserveAspectFit; smooth:true; mipmap:true; cache:false }
         }
         footer: RowLayout { Item {Layout.fillWidth:true} Button {text:"Cancelar";onClicked:quote_dialog.close()} Button {text:"Guardar imagen…";enabled:s.quote_can_save;onClicked:quote_file.open()} Item {width:12} }
-        Timer { id:quote_delay;interval:150;onTriggered:backend.update_quote(quote_dialog.spanish,quote_dialog.include_image,s.themes[quote_dialog.color_index].key) }
+        Timer { id:quote_delay;interval:150;onTriggered:backend.update_quote(quote_dialog.spanish,quote_dialog.include_image,quote_dialog.title_spanish,s.themes[quote_dialog.color_index].key) }
+    }
+    FileDialog { id: opml_import_file; title: "Importar fuentes y categorías"; nameFilters: ["Fuentes OPML (*.opml *.xml)"]; onAccepted: backend.portability_action("import_opml", selectedFile.toString()) }
+    FileDialog { id: opml_export_file; title: "Exportar fuentes y categorías"; fileMode: FileDialog.SaveFile; defaultSuffix: "opml"; nameFilters: ["Fuentes OPML (*.opml)"]; onAccepted: backend.portability_action("export_opml", selectedFile.toString()) }
+    FileDialog { id: backup_export_file; title: "Crear copia de seguridad local"; fileMode: FileDialog.SaveFile; defaultSuffix: "zip"; nameFilters: ["Copia de Choroy Reader (*.zip)"]; onAccepted: backend.portability_action("backup", selectedFile.toString()) }
+    FileDialog { id: backup_import_file; title: "Restaurar copia de seguridad"; nameFilters: ["Copia de Choroy Reader (*.zip)"]; onAccepted: { restore_confirmation.backup_url = selectedFile.toString(); restore_confirmation.open(); } }
+    Dialog {
+        id: restore_confirmation; anchors.centerIn: parent; modal: true; width: Math.min(480, window.width - 40)
+        property string backup_url: ""
+        title: "Restaurar datos locales"
+        background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
+        header: Label { text: restore_confirmation.title; color: p.text; font.bold: true; padding: 16 }
+        contentItem: ColumnLayout {
+            Label { text: "Se reemplazarán las fuentes, preferencias, estados y colecciones actuales por los de la copia. Antes se guardará una copia automática del estado actual en la carpeta backups. El archivo se validará antes de modificar tus datos."; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            RowLayout {
+                Action { text: "Cancelar"; onClicked: restore_confirmation.close() }
+                Action { text: "Restaurar"; enabled: s.portability_ready; active: true; onClicked: { restore_confirmation.close(); backend.portability_action("restore", restore_confirmation.backup_url); } }
+            }
+        }
+    }
+    Popup {
+        anchors.centerIn: parent; modal: true; visible: s.portability_busy; closePolicy: Popup.NoAutoClose
+        background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
+        contentItem: Label { text: "Procesando archivo local…"; color: p.text; padding: 20 }
     }
     FileDialog { id:quote_file;title:"Guardar cita";fileMode:FileDialog.SaveFile;currentFolder:s.downloads_folder;nameFilters:["Imagen PNG (*.png)","Imagen JPG (*.jpg *.jpeg)"];defaultSuffix:selectedNameFilter.index===1?"jpg":"png";onAccepted:backend.export_quote(selectedFile.toString()) }
     Dialog { id:error_dialog;anchors.centerIn:parent;modal:true;title:"Choroy Reader";standardButtons:Dialog.Ok;width:Math.min(480,window.width-40)

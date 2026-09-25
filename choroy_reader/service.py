@@ -21,7 +21,7 @@ from .lifecycle import Lifecycle
 
 
 class Service:
-    def __init__(self, root):
+    def __init__(self, root, housekeeping=True):
         self.root = Path(root)
         self.config_path = self.root / 'config.json'
         if self.config_path.exists():
@@ -32,6 +32,7 @@ class Service:
             self.config = copy.deepcopy(core.DEFAULT_CONFIG)
         self.config.setdefault('color', self.config.get('tema', 'gris'))
         self.config.setdefault('radar_palabras', [])
+        self.config.setdefault('colecciones', [])
         self.library = Library(self.root / 'biblioteca')
         self.articles = {}
         for article in self.library.list_items('feed'):
@@ -47,7 +48,8 @@ class Service:
                 if not self.library.contains('historial', article['link']):
                     self.remember_article(article)
 
-        self.cleanup_history()
+        if housekeeping:
+            self.cleanup_history()
 
     def cleanup_history(self, now=None):
         now = time.time() if now is None else now
@@ -93,6 +95,66 @@ class Service:
             if name and os.path.exists(name):
                 os.unlink(name)
 
+    @staticmethod
+    def _size(path):
+        """Tamaño real de archivos bajo una ruta, sin seguir enlaces."""
+        path = Path(path)
+        if not path.exists() or path.is_symlink():
+            return 0
+        if path.is_file():
+            try:
+                return path.stat().st_size
+            except OSError:
+                return 0
+        total = 0
+        for item in path.rglob('*'):
+            try:
+                if item.is_file() and not item.is_symlink():
+                    total += item.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    def storage_report(self):
+        """Desglosa los datos del usuario sin incluir la instalación."""
+        database = sum(self._size(self.root / ('reader_state.sqlite3' + suffix))
+                       for suffix in ('', '-wal', '-shm'))
+        articles = self._size(self.root / 'biblioteca')
+        images = self._size(self.root / 'cache' / 'images')
+        cache_root = self.root / 'cache'
+        cache = max(0, self._size(cache_root) - images)
+        total = self._size(self.root)
+        accounted = database + articles + images + cache
+        return {
+            'path': str(self.root), 'database': database, 'articles': articles,
+            'images': images, 'cache': cache, 'other': max(0, total - accounted),
+            'total': total, 'recoverable': images + cache,
+        }
+
+    def clear_regenerable_cache(self):
+        """Elimina solo archivos de cache/; no afecta datos de lectura."""
+        cache_root = (self.root / 'cache').resolve()
+        if not cache_root.exists():
+            return 0
+        released = 0
+        files = sorted(cache_root.rglob('*'), key=lambda item: len(item.parts), reverse=True)
+        for item in files:
+            try:
+                # No seguir enlaces y asegurar que nada salga del directorio cache.
+                if item.is_symlink():
+                    continue
+                resolved = item.resolve()
+                if resolved != cache_root and cache_root not in resolved.parents:
+                    continue
+                if item.is_file():
+                    released += item.stat().st_size
+                    item.unlink()
+                elif item.is_dir():
+                    item.rmdir()
+            except OSError:
+                continue
+        return released
+
     def image_url(self, data):
         if not data:
             return ''
@@ -117,6 +179,10 @@ class Service:
                 data = core.download(candidate, timeout=8)
                 with Image.open(io.BytesIO(data)) as image:
                     image.verify()
+                # Generar la miniatura mientras se actualiza la fuente evita
+                # decodificar imágenes en el hilo de la interfaz al publicar
+                # las tarjetas nuevas.
+                self.image_url(data)
                 return data
             except Exception:
                 pass
@@ -126,6 +192,7 @@ class Service:
                 data = core.download(candidate, timeout=8)
                 with Image.open(io.BytesIO(data)) as image:
                     image.verify()
+                self.image_url(data)
                 return data
             except Exception:
                 pass
@@ -184,6 +251,10 @@ class Service:
         raw = core.get_articles(feed, maximum=None)
         if raw is None:
             raise ValueError('No se pudo descargar el feed')
+        # Un RSS puede seguir respondiendo aunque no tenga publicaciones dentro
+        # del período elegido. Conservamos esa señal para no borrar el último
+        # snapshot local durante una actualización normal.
+        source['feed_empty_after_period'] = bool(raw)
         output = []
         dated = [(title, link, image, core.parse_date(date)) for title, link, image, date in raw]
         dated = [entry for entry in dated if self.in_period(entry[3], config)]
@@ -199,6 +270,7 @@ class Service:
             output.append(dict(titulo=title, titulo_es=translated or '', link=link,
                                imagen=self.fetch_image(link, image), fecha=date,
                                fuente=source['nombre'], source_url=source['url'], traducir_es=translate))
+        source['feed_empty_after_period'] = bool(raw) and not bool(output)
         return source, output
 
     def refresh(self, progress=None, cancel=None):
@@ -241,7 +313,14 @@ class Service:
         for batch in articles.values():
             for article in batch:
                 self.remember_article(article)
-        self.articles.update(articles)
+        # Una respuesta RSS válida sin entradas para el período no significa que
+        # hayan desaparecido los artículos ya descargados. Mantener el snapshot
+        # evita que el feed se vacíe al pasar de un día a otro. Un feed realmente
+        # vacío (o las llamadas antiguas sin esta señal) sí conserva el
+        # comportamiento de reemplazar por una lista vacía.
+        for url, batch in articles.items():
+            if batch or not updated.get(url, {}).get('feed_empty_after_period'):
+                self.articles[url] = batch
         # Each URL has one persistent snapshot, even when several feeds contain it.
         current = {a['link']: a for a in self.all_articles()}
         for article in current.values():
@@ -258,6 +337,25 @@ class Service:
         self.save_config()
         self.cleanup_history()
         return errors
+
+    def recover_feed_from_history(self):
+        """Recupera el último feed local si sus snapshots se perdieron.
+
+        El historial no se modifica: solo se vuelven a crear las copias de
+        feed para fuentes que aún pertenecen a la configuración actual.
+        """
+        if self.articles:
+            return 0
+        source_urls = {source['url'] for category in self.config['categorias']
+                       for source in category['sitios']
+                       if source.get('source_type') != 'shortcut'}
+        recovered = [article for article in self.library.list_items('historial')
+                     if article.get('source_url') in source_urls
+                     and not self.library.contains('archivados', article['link'])]
+        for article in recovered:
+            self.articles.setdefault(article['source_url'], []).append(article)
+            self.library.save('feed', article)
+        return len(recovered)
 
     def all_articles(self):
         articles = {}
@@ -353,7 +451,9 @@ class Service:
         date = date.astimezone()
         period = config.get('periodo_articulos', 'hoy')
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        if period == 'semana':
+        if period == 'dos_dias':
+            start -= timedelta(days=1)
+        elif period == 'semana':
             start -= timedelta(days=6)
         elif period == 'mes':
             start -= timedelta(days=29)
