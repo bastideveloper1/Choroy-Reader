@@ -37,6 +37,13 @@ como Qt. Un cambio de idioma limpia el formato anterior antes de reemplazar el
 texto y restaura únicamente los rangos del idioma mostrado. La búsqueda no
 modifica los destacados persistidos.
 
+La paleta de destacados es independiente de los temas. Pintar es idempotente:
+las superposiciones reemplazan el color y los tramos contiguos del mismo color
+se fusionan, también al cargar marcas antiguas. El borrado es una acción
+explícita que elimina los bloques completos intersectados por un clic o una
+selección. El arrastre solo persiste al soltar el botón y se descarta si durante
+el gesto cambia el artículo, el idioma o el texto.
+
 El original queda estable para no aplicar posiciones antiguas sobre una revisión
 diferente del artículo. Destacar guarda el artículo en Guardados; las descargas
 masivas guardan texto e imagen sin eliminar descargas anteriores. La traducción
@@ -52,6 +59,21 @@ no reciben el aviso rojo. Una página puede cambiar de tipo editando su entrada.
 No se permite duplicar la misma URL dentro de una categoría. Los favicons se
 obtienen del propio sitio, se validan como imagen y se guardan localmente; si
 fallan, se conserva el nombre como enlace utilizable.
+
+Gestionar muestra las categorías plegadas; el buscador por nombre, URL o RSS
+expande las coincidencias. Los menús contextuales permiten abrir la configuración
+de una fuente o categoría. Desde una tarjeta, las acciones de atajo se aplican
+a su fuente: `source_type=shortcut` deja de mostrar sus noticias y
+`show_shortcut` controla independientemente su presencia en la barra superior.
+Quitar el atajo solo desmarca esta última opción.
+La falta de RSS nunca añade por sí sola una fuente a la barra superior: allí
+solo aparecen los atajos habilitados. Las fuentes sin feed siguen disponibles
+para gestionarlas manualmente.
+
+El orden de categorías y fuentes sigue las listas del JSON; `shortcut_order`
+conserva el orden de la barra por URL, incluso al filtrar una categoría.
+El arrastre permite reordenar categorías y atajos. Las categorías admiten un
+`icon` local opcional, incluido en la copia de seguridad junto a los favicons.
 
 ## Alcance de la revisión
 

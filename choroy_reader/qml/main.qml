@@ -16,6 +16,53 @@ ApplicationWindow {
     property bool sidebar_visible: true
     property bool settings_open: false
     property var expanded_categories: ({})
+    property var managed_categories: ({})
+    property string management_query: ""
+    property string management_target: ""
+    function manage_category(cat, src) {
+        management_query = "";
+        management_target = cat.name;
+        const next = {}; next[cat.name] = true; managed_categories = next;
+        backend.navigate("sources", "", "");
+        if (src) source_dialog.edit(cat.index, src);
+    }
+    function source_for(url) {
+        for (const cat of s.categories)
+            for (const src of cat.sources)
+                if (src.url === url) return {cat: cat, src: src};
+        return null;
+    }
+    function source_matches(src) {
+        const normalize = value => value.toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        return normalize(src.name + " " + src.url + " " + src.feed).includes(normalize(management_query).trim());
+    }
+    component ReorderArea: MouseArea {
+        id: reorder
+        property string kind
+        property string entry_key
+        signal activate()
+        signal context()
+        signal moved(string from_key)
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        cursorShape: drag.active ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+        drag.target: ghost
+        onClicked: mouse => { if (mouse.button === Qt.RightButton) context(); else activate(); }
+        onReleased: { ghost.Drag.drop(); ghost.x = 0; ghost.y = 0; }
+        onCanceled: { ghost.Drag.cancel(); ghost.x = 0; ghost.y = 0; }
+        Item {
+            id: ghost; width: reorder.width; height: reorder.height
+            Drag.active: reorder.drag.active
+            Drag.source: reorder
+            Drag.keys: [reorder.kind]
+            Drag.hotSpot.x: width / 2; Drag.hotSpot.y: height / 2
+        }
+        DropArea {
+            anchors.fill: parent; keys: [reorder.kind]
+            onDropped: drop => { if (drop.source !== reorder) { const key = drop.source.entry_key; Qt.callLater(() => reorder.moved(key)); drop.accept(); } }
+            Rectangle { anchors.fill: parent; color: "transparent"; border.width: 2; border.color: p.accent; visible: parent.containsDrag }
+        }
+    }
     color: p.bg
     font.family: "Sans Serif"
     font.pixelSize: 13
@@ -201,14 +248,45 @@ ApplicationWindow {
                                     id: category_delegate; required property var modelData
                                     property bool expanded: !!window.expanded_categories[modelData.name]
                                     Layout.fillWidth: true; spacing: 2
-                                    Action { text: (category_delegate.expanded ? "⌄  " : "›  ") + category_delegate.modelData.name + "  ·  " + category_delegate.modelData.sources.length; active: s.category === category_delegate.modelData.name; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; onClicked: {const next=Object.assign({},window.expanded_categories);next[category_delegate.modelData.name]=!category_delegate.expanded;window.expanded_categories=next;} }
+                                    Action {
+                                        id: category_button; objectName: "category_" + category_delegate.modelData.name
+                                        favicon: category_delegate.modelData.icon
+                                        text: category_delegate.modelData.name
+                                        active: s.category === category_delegate.modelData.name; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; Layout.topMargin: 6
+                                        Accessible.name: "Categoría: " + text
+                                        Accessible.description: category_delegate.expanded ? "Contraer fuentes" : "Expandir fuentes"
+                                        background: Rectangle {
+                                            radius: 6; color: category_button.hovered ? Qt.lighter(p.hover, 1.12) : p.hover
+                                            border.color: category_button.active || category_button.visualFocus ? p.accent : p.border
+                                            Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 5; width: 3; radius: 1; color: p.accent }
+                                        }
+                                        contentItem: RowLayout {
+                                            spacing: 8
+                                            Text { text: category_delegate.expanded ? "⌄" : "›"; color: p.accent; font.pixelSize: 18; Layout.preferredWidth: 12 }
+                                            Image { source: category_button.favicon; visible: source.toString().length > 0; Layout.preferredWidth: 18; Layout.preferredHeight: 18; fillMode: Image.PreserveAspectFit; smooth: true; mipmap: true }
+                                            Text { text: category_button.text; color: p.text; font.bold: true; font.pixelSize: 13; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                            Rectangle {
+                                                implicitWidth: category_count.implicitWidth + 12; implicitHeight: 22; radius: 11; color: p.panel
+                                                Text { id: category_count; anchors.centerIn: parent; text: category_delegate.modelData.sources.length; color: p.muted; font.pixelSize: 11 }
+                                            }
+                                        }
+                                        onClicked: { const next=Object.assign({},window.expanded_categories); next[category_delegate.modelData.name]=!category_delegate.expanded; window.expanded_categories=next; }
+                                        ReorderArea {
+                                            kind: "category"; entry_key: String(category_delegate.modelData.index)
+                                            onActivate: category_button.clicked()
+                                            onContext: category_menu.popup()
+                                            onMoved: from_key => backend.move_category(Number(from_key), category_delegate.modelData.index - Number(from_key))
+                                        }
+                                        Menu { id: category_menu; MenuItem { objectName: "manage_category_" + category_delegate.modelData.name; text: "Ir a administrar categoría…"; onTriggered: window.manage_category(category_delegate.modelData, null) } }
+                                    }
                                     ColumnLayout {
-                                        visible: category_delegate.expanded; Layout.fillWidth: true; Layout.leftMargin: 28; Layout.rightMargin: 12; spacing: 1
+                                        visible: category_delegate.expanded; Layout.fillWidth: true; Layout.leftMargin: 40; Layout.rightMargin: 12; spacing: 1
                                         Action { text: "Todas las fuentes"; compact: true; Layout.fillWidth: true; onClicked: backend.navigate("feed",category_delegate.modelData.name,"") }
                                         Repeater { model: category_delegate.modelData.sources
                                             delegate: Action {
                                                 id: source_button
                                                 required property var modelData
+                                                font.pixelSize: 12
                                                 text: modelData.name + (modelData.direct_access ? " ↗" : modelData.no_feed ? " · Sin feed" : "")
                                                 favicon: modelData.icon; warning: modelData.no_feed; shortcut: modelData.direct_access; compact: true
                                                 active: s.source === modelData.url; Layout.fillWidth: true
@@ -217,7 +295,7 @@ ApplicationWindow {
                                                 Menu {
                                                     id: source_menu
                                                     MenuItem { text: "Abrir sitio web ↗"; onTriggered: backend.open_url(source_button.modelData.url) }
-                                                    MenuItem { text: "Editar fuente…"; onTriggered: source_dialog.edit(category_delegate.modelData.index, source_button.modelData) }
+                                                    MenuItem { text: "Ir a administrar fuente…"; onTriggered: window.manage_category(category_delegate.modelData, source_button.modelData) }
                                                 }
                                             }
                                         }
@@ -416,11 +494,22 @@ ApplicationWindow {
                         id: interest_row; spacing: 6
                         Repeater { model: s.link_sources
                             delegate: Action {
-                                required property var modelData
-                                text: modelData.name + " ↗"; favicon: modelData.icon; warning: modelData.no_feed; shortcut: modelData.direct_access; compact: true
+                                id: shortcut_button; objectName: "shortcut_" + modelData.name; required property var modelData
+                                ReorderArea {
+                                    kind: "shortcut"; entry_key: shortcut_button.modelData.url
+                                    onActivate: shortcut_button.clicked()
+                                    onContext: shortcut_menu.popup()
+                                    onMoved: from_key => backend.move_shortcut(from_key, shortcut_button.modelData.url)
+                                }
+                                Menu {
+                                    id: shortcut_menu
+                                    MenuItem { text: "Quitar atajo web"; onTriggered: backend.set_source_shortcut(shortcut_button.modelData.category_index, shortcut_button.modelData.index, "remove") }
+                                    MenuItem { text: "Ir a administrar…"; onTriggered: window.manage_category(s.categories[shortcut_button.modelData.category_index], shortcut_button.modelData) }
+                                }
+                                text: modelData.name + " ↗"; favicon: modelData.icon; shortcut: true; compact: true
                                 onClicked: backend.open_url(modelData.url)
                                 ToolTip.visible: hovered
-                                ToolTip.text: modelData.no_feed ? "Sin feed detectado · Abrir sitio web" : "Atajo web · Abrir sitio"
+                                ToolTip.text: "Atajo web · Abrir sitio"
                                 ToolTip.delay: 500
                             }
                         }
@@ -488,7 +577,14 @@ ApplicationWindow {
                                             IconAction { kind: card.modelData.downloaded ? "delete" : "download"; filled: card.modelData.downloaded; enabled: !card.modelData.downloading; hint: filled ? "Eliminar descarga" : "Descargar para leer sin conexión"; onClicked: backend.toggle_download(card.modelData.link) }
                                         }
                                 HoverHandler { id: card_hover }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: {window.feed_scroll=feed_scroll_view.contentItem.contentY;backend.open_article(card.modelData.link);} }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; acceptedButtons: Qt.LeftButton | Qt.RightButton; onClicked: mouse => { if (mouse.button === Qt.RightButton) article_menu.popup(); else {window.feed_scroll=feed_scroll_view.contentItem.contentY;backend.open_article(card.modelData.link);} } }
+                                Menu {
+                                    id: article_menu
+                                    property var entry: window.source_for(card.modelData.source_url)
+                                    MenuItem { text: "Convertir fuente en atajo web (sin noticias)"; enabled: !!article_menu.entry; onTriggered: backend.set_source_shortcut(article_menu.entry.cat.index, article_menu.entry.src.index, "only") }
+                                    MenuItem { text: "Añadir fuente a atajos web (con noticias)"; enabled: !!article_menu.entry; onTriggered: backend.set_source_shortcut(article_menu.entry.cat.index, article_menu.entry.src.index, "add") }
+                                    MenuItem { text: "Ir a administrar fuente…"; enabled: !!article_menu.entry; onTriggered: window.manage_category(article_menu.entry.cat, article_menu.entry.src) }
+                                }
                                 ColumnLayout {
                                     id: card_body; anchors.fill: parent; anchors.margins: 1; spacing: 0
                                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: cards_grid.columns === 1 ? 200 : 150; color: p.hover; clip: true
@@ -529,7 +625,8 @@ ApplicationWindow {
             id: reader_scroll; objectName: "reader_page"; clip: true; contentWidth: availableWidth
             contentHeight: reader_content.implicitHeight
             property bool marking: false
-            property string marker_color: p.light ? "#ffe88f" : p.accent
+            property bool erasing: false
+            property string marker_color: "#ffe88f"
             property int mark_anchor: 0
             property int menu_position: 0
             property string selected_quote: ""
@@ -552,7 +649,7 @@ ApplicationWindow {
                 }
                 Action { text: "Colecciones"; visible: s.reader.saved; compact: true; Layout.leftMargin: 18; onClicked: { article_collections.article_link=s.reader.link; article_collections.open(); } }
                 SectionTitle { text: s.reader.title || ""; font.pixelSize: 23; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
-                Label { text: (reader_scroll.marking ? "Destacador activo · Arrastra para marcar. " : "") + (s.reader.status || ""); color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
+                Label { text: (reader_scroll.marking ? reader_scroll.erasing ? "Borrador activo · Haz clic o arrastra para quitar bloques destacados completos. " : "Destacador activo · Arrastra para pintar; repasar conserva el destacado. " : "") + (s.reader.status || ""); color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
                 TextEdit {
                     id: article_text; objectName: "article_text"; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 28
                     text: s.reader.body || ""; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: !reader_scroll.marking; persistentSelection: true
@@ -568,18 +665,32 @@ ApplicationWindow {
                     }
                     Component.onCompleted: backend.attach_document(textDocument)
                     MouseArea {
+                        objectName: "markerArea"
                         anchors.fill: parent; enabled: reader_scroll.marking; acceptedButtons: Qt.LeftButton; cursorShape: Qt.PointingHandCursor
                         preventStealing: true
+                        property string gesture_identity: ""
+                        property string gesture_text: ""
+                        property string gesture_color: ""
+                        property bool gesture_erasing: false
                         function preview(x, y) {
                             const end = article_text.positionAt(x, y);
                             article_text.select(Math.min(reader_scroll.mark_anchor, end), Math.max(reader_scroll.mark_anchor, end));
                         }
-                        onPressed: function(mouse){ reader_scroll.mark_anchor = article_text.positionAt(mouse.x,mouse.y); article_text.deselect(); }
+                        onPressed: function(mouse){
+                            gesture_identity = article_text.document_identity;
+                            gesture_text = article_text.text;
+                            gesture_color = reader_scroll.marker_color;
+                            gesture_erasing = reader_scroll.erasing;
+                            reader_scroll.mark_anchor = article_text.positionAt(mouse.x,mouse.y);
+                            article_text.deselect();
+                        }
                         onPositionChanged: function(mouse){ if(pressed) preview(mouse.x, mouse.y); }
                         onReleased: function(mouse){
                             const end = article_text.positionAt(mouse.x,mouse.y);
                             article_text.deselect();
-                            backend.mark(reader_scroll.mark_anchor,end,reader_scroll.marker_color);
+                            if (gesture_identity !== article_text.document_identity || gesture_text !== article_text.text) return;
+                            if (gesture_erasing) backend.remove_marks(reader_scroll.mark_anchor, end);
+                            else backend.mark(reader_scroll.mark_anchor, end, gesture_color);
                         }
                         onCanceled: article_text.deselect()
                     }
@@ -588,22 +699,38 @@ ApplicationWindow {
                         onClicked: function(mouse){reader_scroll.menu_position=article_text.positionAt(mouse.x,mouse.y);reader_scroll.selected_quote=article_text.selectedText;article_menu.popup();}
                     }
                     Menu {
-                        id: article_menu
+                        id: article_menu; objectName: "readerContextMenu"
                         MenuItem { text: "Guardar punto de lectura aquí"; onTriggered: backend.save_reading_position(reader_scroll.menu_position) }
                         MenuItem { text: "Crear imagen de la cita…"; enabled: reader_scroll.selected_quote.length > 0; onTriggered: {backend.prepare_quote(reader_scroll.selected_quote);if(reader_scroll.selected_quote.length<=500)quote_dialog.open();} }
                         Menu {
-                            title: "Destacador"
-                            Repeater { model: s.themes
-                                delegate: MenuItem { required property var modelData; visible: modelData.key !== "periodico"; text: "●  " + modelData.name
-                                    contentItem: Text { text: parent.text; color: modelData.color; font.pixelSize: 13; padding: 5 }
-                                    onTriggered: {reader_scroll.marker_color=modelData.color;reader_scroll.marking=true;article_text.deselect();}
+                            objectName: "markerMenu"; title: "Destacador"; width: Math.min(310, window.width - 40)
+                            Repeater { model: s.marker_colors
+                                delegate: MenuItem {
+                                    id: marker_option
+                                    required property var modelData
+                                    objectName: "marker_" + modelData.name
+                                    text: modelData.name
+                                    contentItem: RowLayout {
+                                        spacing: 8
+                                        Rectangle { color: modelData.color; border.color: "#777777"; radius: 3; Layout.preferredWidth: 18; Layout.preferredHeight: 18 }
+                                        Text { text: modelData.name; color: marker_option.highlighted ? marker_option.palette.highlightedText : marker_option.palette.text; font.pixelSize: 13; Layout.fillWidth: true }
+                                    }
+                                    onTriggered: {
+                                        reader_scroll.marker_color = modelData.color;
+                                        reader_scroll.erasing = false;
+                                        reader_scroll.marking = true;
+                                        if (article_text.selectionEnd > article_text.selectionStart)
+                                            backend.mark(article_text.selectionStart, article_text.selectionEnd, modelData.color);
+                                        article_text.deselect();
+                                    }
                                 }
                             }
-                            MenuItem { text: "Destacar selección"; enabled: article_text.selectionEnd > article_text.selectionStart; onTriggered: backend.mark(article_text.selectionStart,article_text.selectionEnd,reader_scroll.marker_color) }
+                            MenuItem { text: "Destacar selección"; enabled: article_text.selectionEnd > article_text.selectionStart; onTriggered: {backend.mark(article_text.selectionStart,article_text.selectionEnd,reader_scroll.marker_color);article_text.deselect();} }
                             MenuSeparator {}
-                            MenuItem { text: "Desactivar destacador"; onTriggered: reader_scroll.marking=false }
+                            MenuItem { objectName: "markerEraser"; text: "Borrador · bloques completos"; onTriggered: {reader_scroll.erasing=true;reader_scroll.marking=true;article_text.deselect();} }
+                            MenuItem { text: "Desactivar destacador / borrador"; onTriggered: {reader_scroll.marking=false;reader_scroll.erasing=false;article_text.deselect();} }
                         }
-                        MenuItem { text: "Quitar destacado"; onTriggered: {if(article_text.selectionEnd>article_text.selectionStart)backend.mark(article_text.selectionStart,article_text.selectionEnd,"");else backend.remove_mark_at(reader_scroll.menu_position);} }
+                        MenuItem { text: article_text.selectionEnd > article_text.selectionStart ? "Quitar destacados completos de la selección" : "Quitar este destacado"; onTriggered: {if(article_text.selectionEnd>article_text.selectionStart)backend.remove_marks(article_text.selectionStart,article_text.selectionEnd);else backend.remove_mark_at(reader_scroll.menu_position);article_text.deselect();} }
                     }
                 }
                 Action {
@@ -886,7 +1013,7 @@ ApplicationWindow {
             ColumnLayout { width: sources_scroll.availableWidth; spacing: 10
                 RowLayout { Layout.fillWidth: true; Layout.margins: 18
                     SectionTitle { text: "Fuentes y categorías"; Layout.fillWidth: true }
-                    Action { text: "+ Categoría"; active: true; onClicked: {category_dialog.category_index=-1;category_name.text="";category_dialog.open();} }
+                    Action { text: "+ Categoría"; active: true; onClicked: {category_dialog.edit(null);} }
                 }
                 RowLayout {
                     Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -938,18 +1065,26 @@ ApplicationWindow {
                         Label { visible: !s.portability_ready; text: "Espera a que finalicen las tareas en curso."; color: p.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     }
                 }
+                Search { objectName: "sourceSearch"; placeholderText: "Buscar fuente por nombre, web o RSS"; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; text: window.management_query; onTextEdited: window.management_query = text }
+                Label { visible: window.management_query.length > 0 && !s.categories.some(cat => cat.sources.some(src => window.source_matches(src))); text: "No se encontraron fuentes"; color: p.muted; Layout.leftMargin: 18 }
                 Repeater { model: s.categories
                     delegate: Rectangle {
-                        id: settings_cat; required property var modelData; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; implicitHeight: cat_settings.implicitHeight+20; color: p.panel; border.color: p.border; radius: 6
+                        id: settings_cat; objectName: "managed_" + modelData.name; required property var modelData
+                        property bool expanded: window.management_query.trim().length > 0 || !!window.managed_categories[modelData.name]
+                        visible: !window.management_query.trim().length || modelData.sources.some(src => window.source_matches(src))
+                        function reveal_target() { if (window.management_target === modelData.name) Qt.callLater(() => { const point = settings_cat.mapToItem(sources_scroll.contentItem.contentItem, 0, 0); sources_scroll.contentItem.contentY = Math.max(0, Math.min(point.y, sources_scroll.contentItem.contentHeight - sources_scroll.availableHeight)); window.management_target = ""; }); }
+                        Component.onCompleted: reveal_target()
+                        Connections { target: window; function onManagement_targetChanged() { settings_cat.reveal_target(); } }
+                         Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; implicitHeight: cat_settings.implicitHeight+20; color: p.panel; border.color: p.border; radius: 6
                         ColumnLayout { id: cat_settings; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 10; spacing: 6
                             RowLayout { Layout.fillWidth: true
-                                SectionTitle { text: settings_cat.modelData.name; font.pixelSize: 14; Layout.fillWidth: true }
+                                Action { text: (settings_cat.expanded ? "⌄  " : "›  ") + settings_cat.modelData.name + " · " + settings_cat.modelData.sources.length; favicon: settings_cat.modelData.icon; Layout.fillWidth: true; onClicked: { const next = Object.assign({}, window.managed_categories); next[settings_cat.modelData.name] = !settings_cat.expanded; window.managed_categories = next; } }
                                 Action { text: "↑"; compact: true; onClicked: backend.move_category(settings_cat.modelData.index,-1) }
                                 Action { text: "↓"; compact: true; onClicked: backend.move_category(settings_cat.modelData.index,1) }
-                                Action { text: "Editar"; compact: true; onClicked: {category_dialog.category_index=settings_cat.modelData.index;category_name.text=settings_cat.modelData.name;category_dialog.open();} }
+                                Action { text: "Editar"; compact: true; onClicked: {category_dialog.edit(settings_cat.modelData);} }
                                 Action { text: "×"; compact: true; onClicked: backend.delete_category(settings_cat.modelData.index) }
                             }
-                            Repeater { model: settings_cat.modelData.sources
+                            Repeater { model: settings_cat.expanded ? settings_cat.modelData.sources.filter(src => window.source_matches(src)) : []
                                 delegate: ColumnLayout { id: source_row; required property var modelData; Layout.fillWidth: true
                                     RowLayout { Layout.fillWidth: true
                                         Image { source: source_row.modelData.icon; visible: source.toString().length>0; Layout.preferredWidth: 16; Layout.preferredHeight: 16; smooth: true; mipmap: true }
@@ -962,7 +1097,7 @@ ApplicationWindow {
                                     Label { text: source_row.modelData.feed || source_row.modelData.url; color: p.muted; font.pixelSize: 10; elide: Text.ElideMiddle; Layout.fillWidth: true }
                                 }
                             }
-                            Action { text: "+ Añadir fuente"; active: true; onClicked: source_dialog.edit(settings_cat.modelData.index,null) }
+                            Action { visible: settings_cat.expanded; text: "+ Añadir fuente"; active: true; onClicked: source_dialog.edit(settings_cat.modelData.index,null) }
                         }
                     }
                 }
@@ -983,11 +1118,19 @@ ApplicationWindow {
         }
     }
     Dialog {
-        id: category_dialog; property int category_index: -1; anchors.centerIn: parent; modal: true; title: category_index<0 ? "Nueva categoría" : "Editar categoría"; width: Math.min(400,window.width-40)
+        id: category_dialog
+        property string icon_url: ""
+        function edit(cat) { category_index = cat ? cat.index : -1; category_name.text = cat ? cat.name : ""; icon_url = cat ? cat.icon : ""; open(); }
+        property int category_index: -1; anchors.centerIn: parent; modal: true; title: category_index<0 ? "Nueva categoría" : "Editar categoría"; width: Math.min(400,window.width-40)
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
         contentItem: ColumnLayout {
             Search { id: category_name; placeholderText: "Nombre"; Layout.fillWidth: true }
-            RowLayout { Action { text: "Cancelar"; onClicked: category_dialog.close() } Action { text: "Guardar"; active: true; onClicked: {backend.save_category(category_dialog.category_index,category_name.text);category_dialog.close();} } }
+            RowLayout {
+                Image { source: category_dialog.icon_url; visible: source.toString().length > 0; Layout.preferredWidth: 24; Layout.preferredHeight: 24; fillMode: Image.PreserveAspectFit }
+                Action { text: "Elegir icono…"; onClicked: category_icon_file.open() }
+                Action { text: "Quitar icono"; onClicked: category_dialog.icon_url = "" }
+            }
+            RowLayout { Action { text: "Cancelar"; onClicked: category_dialog.close() } Action { text: "Guardar"; active: true; onClicked: {backend.save_category(category_dialog.category_index,category_name.text,category_dialog.icon_url);category_dialog.close();} } }
         }
     }
     Dialog {
@@ -1066,6 +1209,7 @@ ApplicationWindow {
             }
         }
     }
+    FileDialog { id: category_icon_file; title: "Icono de la categoría"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp *.svg *.ico)"]; onAccepted: category_dialog.icon_url = selectedFile.toString() }
     FileDialog { id: icon_file; title: "Icono de la fuente"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp)"]; onAccepted: source_dialog.icon_url=selectedFile.toString() }
 
     Dialog {

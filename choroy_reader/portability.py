@@ -20,6 +20,13 @@ NS = 'https://choroy-reader.local/opml'
 ET.register_namespace('choroy', NS)
 
 
+def configured_icons(config):
+    for category in config['categorias']:
+        yield category, 'icon'
+        for source in category['sitios']:
+            yield source, 'favicon_personalizado'
+
+
 def web_url(value):
     parsed = urlparse(value)
     return parsed.scheme in {'http', 'https'} and bool(parsed.netloc)
@@ -126,19 +133,18 @@ def create_backup(service, target):
             if source.is_dir():
                 shutil.copytree(source, stage / name, ignore=lambda folder, names: [n for n in names if (Path(folder) / n).is_symlink()])
         config = copy.deepcopy(service.config)
-        for category in config['categorias']:
-            for source in category['sitios']:
-                custom = source.get('favicon_personalizado')
-                if not custom:
-                    continue
-                icon = Path(custom)
-                if icon.is_file():
-                    relative = 'portable_icons/' + hashlib.sha256(icon.read_bytes()).hexdigest() + icon.suffix
-                    (stage / 'portable_icons').mkdir(exist_ok=True)
-                    shutil.copyfile(icon, stage / relative)
-                    source['favicon_personalizado'] = relative
-                else:
-                    source['favicon_personalizado'] = None
+        for entry, key in configured_icons(config):
+            custom = entry.get(key)
+            if not custom:
+                continue
+            icon = Path(custom)
+            if icon.is_file():
+                relative = 'portable_icons/' + hashlib.sha256(icon.read_bytes()).hexdigest() + icon.suffix
+                (stage / 'portable_icons').mkdir(exist_ok=True)
+                shutil.copyfile(icon, stage / relative)
+                entry[key] = relative
+            else:
+                entry[key] = None
         (stage / 'config.json').write_text(json.dumps(config, ensure_ascii=False), encoding='utf-8')
         with sqlite3.connect(service.reader_store.path) as original, sqlite3.connect(stage / 'reader_state.sqlite3') as snapshot:
             original.backup(snapshot)
@@ -189,9 +195,10 @@ def validate_backup(path, stage):
         for source in category['sitios']:
             if not isinstance(source.get('nombre'), str) or not isinstance(source.get('url'), str):
                 raise ValueError('Fuente inválida')
-            icon = source.get('favicon_personalizado')
-            if icon and (icon not in files or not icon.startswith('portable_icons/')):
-                raise ValueError('Icono fuera de la copia')
+    for entry, key in configured_icons(config):
+        icon = entry.get(key)
+        if icon and (icon not in files or not icon.startswith('portable_icons/')):
+            raise ValueError('Icono fuera de la copia')
     from .library import Library
     library = Library(stage / 'biblioteca')
     for name in files:
@@ -216,11 +223,10 @@ def restore_backup(service, path):
         stage = Path(temp) / 'incoming'
         stage.mkdir()
         config = validate_backup(path, stage)
-        for category in config['categorias']:
-            for source in category['sitios']:
-                icon = source.get('favicon_personalizado')
-                if icon:
-                    source['favicon_personalizado'] = str(root / icon)
+        for entry, key in configured_icons(config):
+            icon = entry.get(key)
+            if icon:
+                entry[key] = str(root / icon)
         (stage / 'config.json').write_text(json.dumps(config, ensure_ascii=False), encoding='utf-8')
         from .service import Service
         Service(stage, housekeeping=False)  # Validate runtime loading before replacement.

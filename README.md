@@ -96,6 +96,13 @@ el artículo queda en Guardados para recuperarlo después incluso sin conexión.
 Las marcas del original y de la versión en español son independientes: no se
 intenta adivinar qué posiciones equivalen entre idiomas.
 
+En el lector, clic derecho → «Destacador» ofrece amarillo, celeste, verde,
+rojo pálido y rosa en cualquier tema. Elegir un color pinta la selección actual
+y activa el modo de arrastre. Repasar con el mismo color conserva el destacado;
+otro color repinta la zona seleccionada. El «Borrador · bloques completos» quita
+los bloques que toques con un clic o arrastre, sin dejar fragmentos de esos
+bloques. «Quitar este destacado» hace lo mismo desde el menú contextual.
+
 «Descargar todos los artículos» prepara todos los artículos actualmente cargados
 en el feed. El diálogo permite incluir sus traducciones al español. Si ya existe
 una traducción local, «Leer en español» la muestra inmediatamente; sin esa copia,

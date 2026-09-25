@@ -13,6 +13,15 @@ from choroy_reader.library import find_matches
 from . import core
 
 
+MARKER_COLORS = [
+    dict(name='Amarillo', color='#ffe88f'),
+    dict(name='Celeste', color='#a8dcff'),
+    dict(name='Verde', color='#b7e4b0'),
+    dict(name='Rojo pálido', color='#f4aaaa'),
+    dict(name='Rosa', color='#f5b8d5'),
+]
+
+
 class Backend(QObject):
     changed = Signal()
     finished = Signal(object)
@@ -162,7 +171,7 @@ class Backend(QObject):
         progress = self.service.config.get('progreso_lectura', {}).get(link, {})
         position = progress.get('es' if self.reader and self.reader['link'] == link and self.translated else 'original', {})
         collections = [item['name'] for item in self.service.config.get('colecciones', []) if link in item.get('links', [])]
-        return dict(reading_progress=position, link=link, title=article.get('titulo', ''), title_html=self.title_html(article.get('titulo', '')),
+        return dict(source_url=article.get('source_url', ''), reading_progress=position, link=link, title=article.get('titulo', ''), title_html=self.title_html(article.get('titulo', '')),
                     translation=article.get('titulo_es') or '', translation_html=self.title_html(article.get('titulo_es') or ''),
                     show_translation=bool(self.service.config.get('mostrar_titulo_es', True) and translate_enabled and article.get('traducir_es')), source=article.get('fuente', ''),
                     image=self.service.image_url(article.get('imagen')), date=core.relative_date(article.get('fecha')),
@@ -180,19 +189,17 @@ class Backend(QObject):
             for si, src in enumerate(cat['sitios']):
                 shortcut = src.get('source_type') == 'shortcut'
                 show_shortcut = src.get('show_shortcut', shortcut)
-                # Un sitio sin RSS que se ofrece como atajo debe verse y
-                # ordenarse como tal, aunque siga siendo una fuente normal en
-                # la configuración.
+                # Un sitio sin RSS ofrecido como atajo se abre directamente.
                 direct_access = shortcut or (show_shortcut and bool(src.get('sin_feed')))
-                sources.append(dict(index=si, shortcut=shortcut, show_shortcut=show_shortcut,
+                sources.append(dict(category_index=ci, category_name=cat['nombre'], index=si, shortcut=shortcut, show_shortcut=show_shortcut,
                                     direct_access=direct_access,
                                     no_feed=bool(src.get('sin_feed')) and not direct_access, name=src['nombre'], url=src['url'], feed=src.get('url_feed') or '',
                                     maximum=src.get('limite_articulos', 100), translate=src.get('modo_titulo', 'en_es') != 'solo_ingles' and src.get('traduccion_es', True),
                                     icon=self.service.favicon_url(src)))
-            # Los accesos directos se muestran primero; nunca deben heredar la
-            # advertencia de una detección RSS anterior.
-            categories.append(dict(index=ci, name=cat['nombre'], sources=sorted(
-                sources, key=lambda source: (0 if source['direct_access'] else 1 if not source['no_feed'] else 2, source['name'].casefold()))))
+            icon = cat.get('icon') or ''
+            if icon and not icon.startswith('file:'):
+                icon = QUrl.fromLocalFile(icon).toString()
+            categories.append(dict(index=ci, name=cat['nombre'], icon=icon, sources=sources))
         reader = self.article_view(self.reader) if self.reader else {}
         if reader:
             reader.update(body=self.reader_body, status=self.reader_status, translated=self.translated,
@@ -203,13 +210,13 @@ class Backend(QObject):
         if self.page == 'guardados' and self.collection_filter:
             links = next((set(item.get('links', [])) for item in cfg.get('colecciones', []) if item['id'] == self.collection_filter), set())
             articles = [article for article in articles if article['link'] in links]
-        self._state = dict(about=self.about_info, notice_title=self.notice_title, notice_body=self.notice_body, storage=self.storage_info, page=self.page, category=self.category, source=self.source, query=self.query,
+        self._state = dict(marker_colors=MARKER_COLORS, about=self.about_info, notice_title=self.notice_title, notice_body=self.notice_body, storage=self.storage_info, page=self.page, category=self.category, source=self.source, query=self.query,
                            link_sources=sorted(
                                [src for cat in categories if not self.category or cat['name'] == self.category
                                 for src in cat['sources']
-                                if (src['direct_access'] or src['no_feed'] or src['show_shortcut'])
+                                if src['show_shortcut']
                                 and (not self.source or src['url'] == self.source)],
-                               key=lambda src: (0 if src['direct_access'] else 1, src['name'].casefold())),
+                               key=lambda src: cfg.get('shortcut_order', []).index(src['url']) if src['url'] in cfg.get('shortcut_order', []) else len(cfg.get('shortcut_order', []))),
                            read_batch_count=len(self.read_batch - self.service.seen), read_scope=self.read_scope, read_undo=cfg.get('lectura_deshacer', {}),
                            portability_busy=self.portability_busy, portability_ready=self.active_jobs == 0 and not self.portability_busy, history_days=cfg.get('historial_dias', 0), article_period=cfg.get('periodo_articulos', 'dos_dias'), palette=self.palette(), theme=cfg.get('color', 'gris'), themes=themes, categories=categories,
                            columns=cfg.get('articulos_por_fila', 5), show_images=cfg.get('mostrar_imagenes_lectura', True),
@@ -752,7 +759,8 @@ class Backend(QObject):
             QDesktopServices.openUrl(QUrl(url))
 
     @Slot(int, str)
-    def save_category(self, index, name):
+    @Slot(int, str, str)
+    def save_category(self, index, name, icon=None):
         name = name.strip()
         cats = self.service.config['categorias']
         if not name or any(c['nombre'] == name and i != index for i,c in enumerate(cats)):
@@ -761,7 +769,14 @@ class Backend(QObject):
         if index < 0:
             cats.append(dict(nombre=name, sitios=[]))
         elif index < len(cats):
+            old_name = cats[index]['nombre']
             cats[index]['nombre'] = name
+            if self.category == old_name:
+                self.category = name
+        else:
+            return
+        if icon is not None:
+            cats[-1 if index < 0 else index]['icon'] = QUrl(icon).toLocalFile() if icon.startswith('file:') else icon
         self.service.save_config()
         self.publish()
 
@@ -783,6 +798,36 @@ class Backend(QObject):
             cats.insert(index+delta, cats.pop(index))
             self.service.save_config()
             self.publish()
+
+    @Slot(int, int, str)
+    def set_source_shortcut(self, category, index, mode):
+        cats = self.service.config['categorias']
+        if mode not in {'remove', 'only', 'add'} or not 0 <= category < len(cats):
+            return
+        if not 0 <= index < len(cats[category]['sitios']):
+            return
+        source = cats[category]['sitios'][index]
+        source['show_shortcut'] = mode != 'remove'
+        if mode != 'remove':
+            source['source_type'] = 'shortcut' if mode == 'only' else 'feed'
+        self.service.save_config()
+        self.publish()
+
+    @Slot(str, str)
+    def move_shortcut(self, url, target):
+        order = list(dict.fromkeys(src['url'] for src in sorted(
+            [src for cat in self.service.config['categorias'] for src in cat['sitios']],
+            key=lambda src: self.service.config.get('shortcut_order', []).index(src['url'])
+            if src['url'] in self.service.config.get('shortcut_order', [])
+            else len(self.service.config.get('shortcut_order', [])))))
+        if url not in order or target not in order or url == target:
+            return
+        destination = order.index(target)
+        order.remove(url)
+        order.insert(destination, url)
+        self.service.config['shortcut_order'] = order
+        self.service.save_config()
+        self.publish()
 
     @Slot(int, int, int, str, str, str, int, bool, str, bool, result=bool)
     @Slot(int, int, int, str, str, str, int, bool, str, bool, bool, result=bool)
@@ -1060,7 +1105,7 @@ class Backend(QObject):
             self._document_key = (self.reader['link'], language, self.reader_body)
             self.service.reader_store.save_original(self.reader['link'], self.reader['cuerpo'])
             snapshot = self.service.reader_store.read(self.reader['link'])
-            self.marks = [tuple(mark) for mark in snapshot['translated_marks' if self.translated else 'original_marks']]
+            self.marks = self.normalize_marks(snapshot['translated_marks' if self.translated else 'original_marks'])
         self.render_document()
         if self.reader and self.reader_body and self.resume_link == self.reader['link']:
             self.resume_link = None
@@ -1077,46 +1122,73 @@ class Backend(QObject):
             except Exception as error:
                 self.error.emit('No se pudo guardar el destacado: ' + str(error))
 
-    @Slot(int, int, str)
-    def mark(self, start, end, color):
+    def document_length(self):
         if not self._document:
-            return
+            return 0
         import shiboken6
         if not shiboken6.isValid(self._document):
             self._document = None
+            return 0
+        return self._document.characterCount() - 1
+
+    def normalize_marks(self, marks):
+        """Keep contiguous paint of the same color as one erasable block."""
+        length = self.document_length()
+        valid = []
+        for start, end, color in marks:
+            start, end = max(0, start), min(length, end)
+            if start < end and QColor(color).isValid():
+                valid.append((start, end, QColor(color).name()))
+        result = []
+        for start, end, color in sorted(valid):
+            if result and result[-1][2] == color and result[-1][1] >= start:
+                result[-1] = (result[-1][0], max(result[-1][1], end), color)
+            else:
+                result.append((start, end, color))
+        return result
+
+    def commit_marks(self, marks):
+        marks = self.normalize_marks(marks)
+        if marks != self.marks:
+            self.marks = marks
+            self.persist_marks()
+            self.render_document()
+
+    @Slot(int, int, str)
+    def mark(self, start, end, color):
+        if not color:
+            self.remove_marks(start, end)
             return
-        start, end = sorted((start,end))
-        end = min(end, self._document.characterCount()-1)
-        if start < 0 or start >= end:
+        start, end = sorted((start, end))
+        start, end = max(0, start), min(end, self.document_length())
+        if start >= end or not QColor(color).isValid():
             return
         remaining = []
-        same_color = []
         for a,b,c in self.marks:
             if b <= start or a >= end:
                 remaining.append((a,b,c))
             else:
                 if a < start: remaining.append((a,start,c))
                 if b > end: remaining.append((end,b,c))
-                if color and QColor(c) == QColor(color):
-                    same_color.append((max(a, start), min(b, end)))
-        if color:
-            # Toggle only the portions already painted with this color.
-            position = start
-            for a, b in sorted(same_color):
-                if position < a:
-                    remaining.append((position, a, color))
-                position = max(position, b)
-            if position < end:
-                remaining.append((position, end, color))
-        self.marks = remaining
-        self.persist_marks()
-        self.render_document()
+        # Painting is idempotent: overlap never toggles existing paint off.
+        remaining.append((start, end, color))
+        self.commit_marks(remaining)
+
+    @Slot(int, int)
+    def remove_marks(self, start, end):
+        start, end = sorted((start, end))
+        length = self.document_length()
+        if not length or end < 0 or start >= length:
+            return
+        start, end = max(0, start), min(length, end)
+        marks = self.normalize_marks(self.marks)
+        # Erase whole touched blocks, both for a click and for a dragged range.
+        self.commit_marks([(a, b, c) for a, b, c in marks
+                           if not (a <= start < b if start == end else a < end and b > start)])
 
     @Slot(int)
     def remove_mark_at(self, position):
-        self.marks = [(a,b,c) for a,b,c in self.marks if not a <= position < b]
-        self.persist_marks()
-        self.render_document()
+        self.remove_marks(position, position)
 
     def render_document(self):
         doc = self._document

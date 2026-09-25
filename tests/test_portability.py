@@ -26,6 +26,19 @@ class PortabilityTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_backup_preserves_category_icon_and_order(self):
+        icon = self.root / 'category.png'
+        icon.write_bytes(b'category icon')
+        self.service.config['categorias'][0]['icon'] = str(icon)
+        self.service.config['shortcut_order'] = ['https://shortcut.example', 'https://example.com']
+        backup = self.root / 'copy.zip'
+        portability.create_backup(self.service, backup)
+        destination = Service(self.root / 'destination')
+        portability.restore_backup(destination, backup)
+        restored = Service(destination.root).config
+        self.assertEqual(Path(restored['categorias'][0]['icon']).read_bytes(), b'category icon')
+        self.assertEqual(restored['shortcut_order'], self.service.config['shortcut_order'])
+
     def test_opml_roundtrip_merge_and_duplicate_protection(self):
         path = self.root / 'sources.opml'
         portability.export_opml(self.service.config, path)

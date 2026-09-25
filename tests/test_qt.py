@@ -37,6 +37,88 @@ class QtTests(unittest.TestCase):
         self.backend.deleteLater();APP.processEvents()
         self.tmp.cleanup()
 
+    def visual_item(self, root, name):
+        def find(item):
+            if item.objectName() == name:
+                return item
+            for child in item.childItems():
+                found = find(child)
+                if found is not None:
+                    return found
+        return find(root.contentItem() if isinstance(root, QQuickWindow) else root)
+
+    def test_shortcut_modes_preserve_source_and_feed(self):
+        source = self.service.config['categorias'][0]['sitios'][0]
+        source['url_feed'] = 'https://example.com/rss'
+        self.backend.set_source_shortcut(0, 0, 'add')
+        self.assertEqual(len(self.backend.state['articles']), 1)
+        self.assertEqual(len(self.backend.state['link_sources']), 1)
+        self.backend.set_source_shortcut(0, 0, 'only')
+        self.assertEqual(self.backend.state['articles'], [])
+        self.backend.set_source_shortcut(0, 0, 'remove')
+        self.assertEqual(self.backend.state['link_sources'], [])
+        self.assertEqual(source['url_feed'], 'https://example.com/rss')
+        self.assertEqual(len(self.service.config['categorias'][0]['sitios']), 1)
+        self.backend.set_source_shortcut(0, 0, 'add')
+        self.assertEqual(len(self.backend.state['articles']), 1)
+        persisted = Service(self.tmp.name).config['categorias'][0]['sitios'][0]
+        self.assertTrue(persisted['show_shortcut'])
+        self.assertEqual(persisted['source_type'], 'feed')
+
+    def test_management_collapses_and_searches(self):
+        self.service.config['categorias'].append({'nombre': 'Other', 'sitios': []})
+        self.backend.navigate('sources', '', '')
+        root = self.load_qml()
+        category = self.visual_item(root, 'managed_Tech')
+        self.assertFalse(category.property('expanded'))
+        root.setProperty('management_query', 'example.com')
+        QTest.qWait(50)
+        self.assertTrue(category.property('expanded'))
+        self.assertTrue(category.isVisible())
+        self.assertFalse(self.visual_item(root, 'managed_Other').isVisible())
+        root.setProperty('management_query', 'absent')
+        QTest.qWait(50)
+        self.assertFalse(category.isVisible())
+
+    def test_category_context_opens_management(self):
+        root = self.load_qml()
+        button = self.visual_item(root, 'category_Tech')
+        point = button.mapToScene(button.boundingRect().center()).toPoint()
+        QTest.mouseClick(root, Qt.RightButton, Qt.NoModifier, point)
+        QTest.qWait(100)
+        action = self.visual_item(root, 'manage_category_Tech')
+        self.assertIsNotNone(action)
+        point = action.mapToScene(action.boundingRect().center()).toPoint()
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, point)
+        QTest.qWait(150)
+        self.assertEqual(self.backend.page, 'sources')
+        self.assertTrue(self.visual_item(root, 'managed_Tech').property('expanded'))
+        self.assertEqual(root.property('management_target'), '')
+
+    def test_drag_categories_and_shortcuts_persists(self):
+        self.service.config['categorias'].append({'nombre': 'Other', 'sitios': [
+            {'nombre': 'Second', 'url': 'https://second.example', 'source_type': 'shortcut'}]})
+        self.service.config['categorias'][0]['sitios'][0]['show_shortcut'] = True
+        self.backend.publish()
+        root = self.load_qml()
+        def drag(first, second):
+            start = self.visual_item(root, first)
+            end = self.visual_item(root, second)
+            a = start.mapToScene(start.boundingRect().center()).toPoint()
+            b = end.mapToScene(end.boundingRect().center()).toPoint()
+            QTest.mousePress(root, Qt.LeftButton, Qt.NoModifier, a)
+            for i in range(1, 11):
+                QTest.mouseMove(root, a + (b - a) * (i / 10), 20)
+            QTest.mouseRelease(root, Qt.LeftButton, Qt.NoModifier, b)
+            QTest.qWait(100)
+        drag('category_Tech', 'category_Other')
+        self.assertEqual([c['nombre'] for c in self.service.config['categorias']], ['Other', 'Tech'])
+        drag('shortcut_Second', 'shortcut_Fuente')
+        self.assertEqual([s['name'] for s in self.backend.state['link_sources']], ['Fuente', 'Second'])
+        persisted = Service(self.tmp.name).config
+        self.assertEqual(persisted['categorias'][0]['nombre'], 'Other')
+        self.assertEqual(persisted['shortcut_order'][0], 'https://example.com')
+
     def test_annotations_survive_translation_navigation_and_restart(self):
         root = self.load_qml()
         self.backend.open_article(self.article['link'])
@@ -78,6 +160,11 @@ class QtTests(unittest.TestCase):
             reopened.attach_document(original_document)
             self.assertEqual(reopened.marks, [(2, 35, '#b9a0ff')])
             reopened.translate_article()
+            for _ in range(150):
+                QTest.qWait(20)
+                if reopened.translated:
+                    break
+            self.assertTrue(reopened.translated)
             translated_document = QTextDocument(reopened.reader_body)
             reopened.attach_document(translated_document)
             self.assertEqual(reopened.marks, [(1, 8, '#ffe88f')])
@@ -205,6 +292,21 @@ class QtTests(unittest.TestCase):
             self.assertEqual(persisted['show_shortcut'], show_shortcut)
             self.assertEqual(persisted['source_type'], 'feed')
 
+    def test_missing_feed_does_not_create_a_shortcut(self):
+        source = self.service.config['categorias'][0]['sitios'][0]
+        source['sin_feed'] = True
+        for source_type in ('feed', 'shortcut'):
+            for preference in (None, False, True):
+                with self.subTest(source_type=source_type, preference=preference):
+                    source['source_type'] = source_type
+                    source.pop('show_shortcut', None)
+                    if preference is not None:
+                        source['show_shortcut'] = preference
+                    self.backend.publish()
+                    expected = source_type == 'shortcut' if preference is None else preference
+                    self.assertEqual(len(self.backend.state['link_sources']), int(expected))
+                    self.assertEqual(len(self.backend.state['categories'][0]['sources']), 1)
+
     def test_navigation_and_feed_toolbar_align(self):
         root = self.load_qml()
         navigation = root.findChild(QQuickItem, 'articlesNavigation')
@@ -310,18 +412,116 @@ class QtTests(unittest.TestCase):
             self.assertEqual(self.backend.marks[0][:2], expected)
             self.assertEqual(persist.call_count, 1)
 
-    def test_same_highlight_color_erases_only_overlapping_section(self):
+    def test_repainting_highlights_never_erases_or_fragments_them(self):
         doc = QTextDocument('abcdefghijklmnopqrstuvwxyz')
         self.backend.attach_document(doc)
         self.backend.mark(2, 20, '#b9a0ff')
-        self.backend.mark(14, 6, '#B9A0FF')
-        self.assertEqual(sorted(self.backend.marks), [(2, 6, '#b9a0ff'), (14, 20, '#b9a0ff')])
-        self.backend.mark(14, 20, '#b9a0ff')
-        self.assertEqual(self.backend.marks, [(2, 6, '#b9a0ff')])
-        self.backend.mark(4, 10, '#b9a0ff')
-        self.assertEqual(sorted(self.backend.marks), [(2, 4, '#b9a0ff'), (6, 10, '#b9a0ff')])
+        with patch.object(self.backend, 'persist_marks', wraps=self.backend.persist_marks) as persist:
+            for start, end in [(14, 6), (2, 20), (6, 14), (4, 10)]:
+                self.backend.mark(start, end, '#B9A0FF')
+                self.assertEqual(self.backend.marks, [(2, 20, '#b9a0ff')])
+            persist.assert_not_called()
+        self.backend.mark(18, 24, '#b9a0ff')
+        self.assertEqual(self.backend.marks, [(2, 24, '#b9a0ff')])
         self.backend.mark(6, 10, '#7bc3ff')
-        self.assertIn((6, 10, '#7bc3ff'), self.backend.marks)
+        self.assertEqual(self.backend.marks, [(2, 6, '#b9a0ff'), (6, 10, '#7bc3ff'), (10, 24, '#b9a0ff')])
+        self.backend.mark(10, 6, '#b9a0ff')
+        self.assertEqual(self.backend.marks, [(2, 24, '#b9a0ff')])
+
+    def test_eraser_removes_whole_touched_blocks_and_respects_boundaries(self):
+        doc = QTextDocument('abcdefghijklmnopqrstuvwxyz')
+        self.backend.attach_document(doc)
+        self.backend.mark(2, 8, '#ffe88f')
+        self.backend.mark(10, 16, '#a8dcff')
+        self.backend.mark(16, 24, '#b7e4b0')
+        self.backend.remove_marks(16, 13)
+        self.assertEqual(self.backend.marks, [(2, 8, '#ffe88f'), (16, 24, '#b7e4b0')])
+        self.backend.remove_mark_at(8)  # The end offset is outside the mark.
+        self.assertEqual(len(self.backend.marks), 2)
+        self.backend.remove_mark_at(3)
+        self.assertEqual(self.backend.marks, [(16, 24, '#b7e4b0')])
+        self.backend.remove_marks(26, 18)
+        self.assertEqual(self.backend.marks, [])
+        self.backend.mark(2, 8, '#ffe88f')
+        self.backend.mark(10, 16, '#a8dcff')
+        self.backend.remove_marks(4, 12)
+        self.assertEqual(self.backend.marks, [])
+
+    def test_marker_colors_are_independent_of_theme_and_paint_selection(self):
+        root = self.load_qml()
+        self.backend.open_article(self.article['link'])
+        for _ in range(150):
+            QTest.qWait(20)
+            if self.backend._document_key:
+                break
+        reader = root.findChild(QQuickItem, 'reader_page')
+        text = root.findChild(QQuickItem, 'article_text')
+        menu = root.findChild(QObject, 'markerMenu')
+        context_menu = root.findChild(QObject, 'readerContextMenu')
+        expected = ['Amarillo', 'Celeste', 'Verde', 'Rojo pálido', 'Rosa']
+        for theme in ('gris', 'periodico'):
+            self.backend.set_theme(theme)
+            QTest.qWait(30)
+            self.assertEqual([c['name'] for c in self.backend.state['marker_colors']], expected)
+            for color in self.backend.state['marker_colors']:
+                QMetaObject.invokeMethod(context_menu, 'open')
+                QTest.qWait(30)
+                QMetaObject.invokeMethod(menu, 'open')
+                QTest.qWait(30)
+                action = self.visual_item(menu.property('contentItem'), 'marker_' + color['name'])
+                self.assertIsNotNone(action)
+                self.assertTrue(action.isVisible())
+                self.assertTrue(QMetaObject.invokeMethod(text, 'selectAll'))
+                QMetaObject.invokeMethod(action, 'triggered')
+                QTest.qWait(30)
+                self.assertEqual(reader.property('marker_color'), color['color'])
+                self.assertFalse(reader.property('erasing'))
+                self.assertEqual(self.backend.marks, [(0, self.backend.document_length(), color['color'])])
+                cursor = QTextCursor(self.backend._document)
+                cursor.setPosition(1)
+                self.assertEqual(cursor.charFormat().background().color().name(), color['color'])
+            QMetaObject.invokeMethod(menu, 'close')
+            QMetaObject.invokeMethod(context_menu, 'close')
+            QTest.qWait(30)
+
+    def test_repeated_mouse_highlights_and_eraser_persist(self):
+        self.article['cuerpo'] = 'abcdefghijklmnopqrstuvwxyz ' * 12
+        root = self.load_qml()
+        self.backend.open_article(self.article['link'])
+        for _ in range(150):
+            QTest.qWait(20)
+            if self.backend._document_key:
+                break
+        reader = root.findChild(QQuickItem, 'reader_page')
+        text = root.findChild(QQuickItem, 'article_text')
+        reader.setProperty('marking', True)
+        def drag(first, last):
+            start = text.mapToScene(QPoint(first, 10)).toPoint()
+            end = text.mapToScene(QPoint(last, 10)).toPoint()
+            QTest.mousePress(root, Qt.LeftButton, Qt.NoModifier, start)
+            QTest.mouseMove(root, end, 10)
+            QTest.mouseRelease(root, Qt.LeftButton, Qt.NoModifier, end)
+            QTest.qWait(30)
+        drag(15, 160)
+        initial = list(self.backend.marks)
+        self.assertEqual(len(initial), 1)
+        drag(130, 50)
+        drag(50, 130)
+        self.assertEqual(self.backend.marks, initial)
+        link = self.article['link']
+        self.assertEqual(self.service.reader_store.read(link)['original_marks'], [list(m) for m in initial])
+        reader.setProperty('erasing', True)
+        drag(50, 95)
+        self.assertEqual(self.backend.marks, [])
+        self.assertEqual(self.service.reader_store.read(link)['original_marks'], [])
+        self.backend.close_article()
+        QTest.qWait(30)
+        self.backend.open_article(link)
+        for _ in range(150):
+            QTest.qWait(20)
+            if self.backend._document_key:
+                break
+        self.assertEqual(self.backend.marks, [])
 
     def test_multiline_highlight_and_color_changes(self):
         doc=QTextDocument(self.article['cuerpo'])
