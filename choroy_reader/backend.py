@@ -1,4 +1,5 @@
 """Puente QObject: las tareas de red nunca modifican la interfaz desde un hilo."""
+import uuid
 import html
 import base64
 from functools import lru_cache
@@ -224,7 +225,7 @@ class Backend(QObject):
             categories.append(dict(index=ci, name=cat['nombre'], icon=icon, sources=sources))
         reader = self.article_view(self.reader) if self.reader else {}
         if reader:
-            reader.update(font_size=self.reader_font_size, inline_images=self.inline_images(), body=self.reader_body, status=self.reader_status, translated=self.translated,
+            reader.update(notes=self.reader_notes(), font_size=self.reader_font_size, inline_images=self.inline_images(), body=self.reader_body, status=self.reader_status, translated=self.translated,
                           translating=self.translating, ready=bool(self.reader.get('cuerpo')),
                           show_image=cfg.get('mostrar_imagenes_lectura', True))
         collection_items = [dict(id='', name='Todas las colecciones')] + [dict(id=item['id'], name=item['name']) for item in cfg.get('colecciones', [])]
@@ -255,6 +256,8 @@ class Backend(QObject):
                            quote_can_save=self.quote_image is not None and not self.quote_busy,
                            quote_has_image=bool(self.quote_data and self.quote_data['article'].get('imagen')),
                            quote_is_translated=bool(self.quote_data and self.quote_data['translated']),
+                           quote_has_original=bool(self.quote_data and self.quote_data.get('original_text')),
+                           quote_original_body=self.quote_data['article'].get('cuerpo', '') if self.quote_data else '',
                            quote_title_has_translation=bool(self.quote_data and self.quote_data['article'].get('titulo_es')),
                            downloads_folder=QUrl.fromLocalFile(QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)).toString())
         self.article_model.update(self._state['articles'])
@@ -974,11 +977,26 @@ class Backend(QObject):
         if not self.reader or not text.strip() or len(text.strip()) > 500:
             self.error.emit('Selecciona un fragmento de hasta 500 caracteres')
             return
-        self.quote_data = dict(text=text.strip(), article=dict(self.reader), translated=self.translated)
+        self.quote_token += 1
+        self.quote_busy = False
+        self.quote_data = dict(text=text.strip(), article=dict(self.reader), translated=self.translated,
+                               original_text='' if self.translated else text.strip())
         self.quote_translation = text.strip() if self.translated else None
         self.quote_image = None
         self.quote_preview = ''
         self.publish()
+
+    @Slot(str, result=bool)
+    def set_quote_original(self, text):
+        text = text.replace('\u2029', '\n').strip()
+        if not self.quote_data or not text or len(text) > 500:
+            return False
+        if text not in self.quote_data['article'].get('cuerpo', ''):
+            self.error.emit('Selecciona un fragmento del texto original.')
+            return False
+        self.quote_data['original_text'] = text
+        self.publish()
+        return True
 
     @Slot(bool, bool, str)
     @Slot(bool, bool, bool, str)
@@ -990,17 +1008,18 @@ class Backend(QObject):
         theme = theme or self.service.config.get('color', 'gris')
         if not self.quote_data:
             return
-        if self.quote_data['translated'] and not spanish:
+        if not spanish and not self.quote_data.get('original_text'):
             self.error.emit('Selecciona el fragmento en el original para conservar sus palabras exactas')
             return
         self.quote_token += 1
         token, data = self.quote_token, dict(self.quote_data)
         self.quote_busy = True
         self.quote_image = None
+        cached_translation = self.quote_translation
         self.publish()
         def work():
-            text = data['text']
-            translated_text = self.quote_translation
+            text = data['text'] if spanish else data['original_text']
+            translated_text = cached_translation
             if spanish:
                 translated_text = translated_text or self.service.translate(text)
                 text = translated_text
@@ -1186,6 +1205,131 @@ class Backend(QObject):
         if self.reader and self.reader_body and self.resume_link == self.reader['link']:
             self.resume_link = None
             self.resume_reading()
+
+    def reader_notes(self):
+        if not self.reader or not self.reader_body:
+            return []
+        return self.service.reader_store.read_notes(
+            self.reader['link'], 'es' if self.translated else 'original', self.reader_body)
+
+    @Slot(int, result='QVariantMap')
+    def create_note(self, position):
+        if not self._document_key or not self.reader:
+            return {}
+        link, language, body = self._document_key
+        if (link, language, body) != (self.reader['link'], 'es' if self.translated else 'original', self.reader_body):
+            return {}
+        note = dict(id=uuid.uuid4().hex, position=max(0, min(position, self.document_length())),
+                    text='', color=MARKER_COLORS[0]['color'], images=[], theme='periodico')
+        try:
+            if not self.service.library.contains('guardados', link):
+                self.service.library.save('guardados', self.reader)
+            self.service.reader_store.save_note(link, language, body, note)
+            self.publish()
+            return note
+        except Exception as error:
+            self.error.emit('No se pudo crear la nota: ' + str(error))
+            return {}
+
+    @Slot(str, str, str, 'QVariantList', result=bool)
+    def save_note(self, note_id, text, color, images):
+        note = next((item for item in self.reader_notes() if item['id'] == note_id), None)
+        if note is None:
+            return False
+        note.update(text=text, color=color if color in {c['color'] for c in MARKER_COLORS} else '#ffe88f',
+                    images=[source for source in images if isinstance(source, str) and source.startswith('data:image/png;base64,')])
+        try:
+            self.service.reader_store.save_note(self.reader['link'], 'es' if self.translated else 'original', self.reader_body, note)
+            self.publish()
+            return True
+        except Exception as error:
+            self.error.emit('No se pudo guardar la nota: ' + str(error))
+            return False
+
+    def note_document_of(self, quick_document):
+        from .note_document import document_of
+        # Keep both Qt wrappers alive, as for the article's Quick document.
+        self._note_quick_document = quick_document
+        self._note_document = document_of(quick_document)
+        return self._note_document
+
+    @Slot(str, result=str)
+    def note_html(self, note_id):
+        from .note_document import note_html
+        record = self.service.reader_store.note_record(note_id)
+        return note_html(record[3]) if record else ''
+
+    @Slot(str, QObject, str, str, result=bool)
+    def save_note_document(self, note_id, quick_document, color, theme):
+        try:
+            record = self.service.reader_store.note_record(note_id)
+            if not record:
+                return False
+            link, language, body, note = record
+            document = self.note_document_of(quick_document)
+            note.update(text=document.toPlainText().replace('\ufffc', ''), html=document.toHtml(), images=[],
+                        color=color if color in {item['color'] for item in MARKER_COLORS} else '#ffe88f',
+                        theme=theme if theme in {'periodico', 'gris', 'postit'} else 'periodico')
+            self.service.reader_store.save_note(link, language, body, note)
+            self.publish()
+            return True
+        except Exception as error:
+            self.error.emit('No se pudo guardar la nota: ' + str(error))
+            return False
+
+    @Slot(QObject, int, str, str, result=int)
+    def note_insert_image(self, quick_document, position, source, alignment):
+        from .note_document import insert_image
+        return insert_image(self.note_document_of(quick_document), position, source, alignment)
+
+    @Slot(QObject, result='QVariantList')
+    def note_image_layout(self, quick_document):
+        from .note_document import image_layout
+        return image_layout(self.note_document_of(quick_document))
+
+    @Slot(QObject, int, int, str, float, result=int)
+    def note_change_image(self, quick_document, position, target, alignment, width):
+        from .note_document import change_image
+        return change_image(self.note_document_of(quick_document), position, target, alignment, width)
+
+    @Slot(QObject, int, result=bool)
+    def note_remove_image(self, quick_document, position):
+        from .note_document import remove_image
+        return remove_image(self.note_document_of(quick_document), position)
+
+    @Slot(str, result=bool)
+    def delete_note(self, note_id):
+        try:
+            record = self.service.reader_store.note_record(note_id)
+            if not record:
+                return False
+            self.service.reader_store.delete_note(note_id, *record[:3])
+            self.publish()
+            return True
+        except Exception as error:
+            self.error.emit('No se pudo eliminar la nota: ' + str(error))
+            return False
+
+    @Slot(str, result=str)
+    def import_note_image(self, url):
+        try:
+            path = QUrl(url).toLocalFile()
+            if not path or Path(path).stat().st_size > 20 * 1024 * 1024:
+                raise ValueError('Selecciona una imagen local de hasta 20 MB.')
+            with Image.open(path) as source:
+                from PIL import ImageOps
+                image = ImageOps.exif_transpose(source)
+                image.thumbnail((1600, 1600))
+                # Transparent breathing room survives rich-text HTML round trips.
+                image = ImageOps.expand(image.convert('RGBA'), border=max(1, round(image.width * 0.04)),
+                                        fill=(0, 0, 0, 0))
+                image.thumbnail((1600, 1600))
+                buffer = io.BytesIO()
+                image.save(buffer, format='PNG')
+            return 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode('ascii')
+        except Exception as error:
+            self.error.emit('No se pudo adjuntar la imagen: ' + str(error))
+            return ''
 
     def persist_marks(self):
         if self._document_key:

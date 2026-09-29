@@ -49,10 +49,11 @@ Demostración aislada y captura, sin tocar la biblioteca personal:
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software python3 choroy_reader.py --demo --data-dir /tmp/choroy_reader-demo --smoke-test --screenshot /tmp/choroy_reader.png
 ```
 
-## Instaladores (preparación)
+## Instaladores
 
-Se incluyen recetas para Linux y Windows; todavía no se han generado ni
-validado instaladores en equipos limpios. Los paquetes no deben incluir
+Se incluyen recetas para Linux y Windows. La verificación automatizada de Linux
+comprueba el arranque del paquete extraído y la conservación de datos de prueba;
+no sustituye la instalación en un equipo limpio. Los paquetes no deben incluir
 `config.json`, la biblioteca personal ni las cachés del desarrollador.
 
 ### Linux Mint / Ubuntu
@@ -60,12 +61,28 @@ validado instaladores en equipos limpios. Los paquetes no deben incluir
 ```bash
 .venv/bin/python -m pip install -r requirements_build.txt
 .venv/bin/python -m PyInstaller --noconfirm packaging/choroy_reader.spec
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software dist/choroy_reader/choroy_reader --demo --data-dir /tmp/choroy_reader-package-test --smoke-test
-.venv/bin/python packaging/build_linux.py --version 0.1.0
+.venv/bin/python packaging/build_linux.py
+.venv/bin/python packaging/verify_linux.py dist/choroy_reader_0.1.0_amd64.deb
 ```
 
 El resultado esperado es `dist/choroy_reader_0.1.0_amd64.deb` (o `arm64`).
 Incluye acceso en el menú de aplicaciones y un ejecutable con Python y Qt.
+La versión se toma de `assets/app_info.json`; el constructor rechaza versiones
+distintas, recursos incompletos o datos personales dentro del ejecutable.
+También genera un archivo `.deb.sha256` junto al paquete. Para comprobarlo:
+
+```bash
+cd dist
+sha256sum -c choroy_reader_0.1.0_amd64.deb.sha256
+```
+
+Para instalar o actualizar, cierra la aplicación y ejecuta desde la carpeta del
+paquete `sudo apt install ./choroy_reader_0.1.0_amd64.deb`. Para una nueva versión,
+actualiza `assets/app_info.json` y repite la compilación con un número superior.
+El programa se instala en `/opt/choroy_reader`; las preferencias y la biblioteca
+se conservan en `~/.config/noticias` o `~/.config/choroy_reader`. Las actualizaciones
+son manuales mediante un nuevo `.deb`.
+
 Se debe construir en la versión más antigua de Linux que se pretenda soportar
 para no depender de bibliotecas del sistema más recientes. Antes de distribuir,
 validar instalación, apertura, imágenes, citas, red y desinstalación en una máquina
@@ -136,3 +153,40 @@ Añade la dirección del blog o de su sección de noticias y deja vacía la URL 
 Esta extracción no ejecuta JavaScript ni accede a contenido que requiera iniciar sesión. Algunos sitios no exponen sus publicaciones en el HTML y pueden no ser compatibles. Si una extracción posterior no encuentra publicaciones, se conserva la última copia local.
 
 El generador de imágenes de citas ofrece fondos lisos y degradados en **Fondo de la cita**, con colores de texto adaptados al fondo. La vista previa y la exportación PNG/JPG conservan el diseño elegido.
+
+### Notas en los artículos
+
+Haz clic derecho sobre un pasaje y elige **Añadir nota aquí…**. Aparecerá un
+pequeño post-it en el margen, anclado a ese punto del texto incluso al cambiar
+el tamaño de letra. Haz clic para abrir el panel de notas a la derecha: puedes
+seguir leyendo, seleccionando y desplazándote por el artículo a la izquierda.
+La navegación lateral se oculta temporalmente para dejar espacio. **Ampliar nota**
+ocupa casi toda la ventana; **Volver junto al artículo** recupera la vista dividida.
+
+Cada nota conserva su tema: **Periódico** (papel claro), **Gris** (oscuro) o
+**Post-it** (cinco colores). Los colores también identifican la nota en el margen.
+Se guarda automáticamente y al cerrar o cambiar de artículo.
+
+Coloca el cursor donde quieras e inserta una imagen con **＋ Imagen**. Puedes
+arrastrarla a otro punto del texto, hacer clic para elegir **Izquierda**, **Derecha**
+o **En línea**, y ajustar su tamaño con **− / +**. El texto rodea las imágenes
+laterales. La pequeña **× roja** de su esquina elimina la imagen; **Ctrl+Z**
+permite deshacer la edición mientras la nota sigue abierta.
+
+Las imágenes se conservan dentro de la nota y funcionan sin conexión aunque
+se borre el archivo original. Se admiten archivos de hasta 20 MB, ajustados a un
+máximo de 1600 píxeles por lado. Las notas anteriores conservan su texto e imágenes.
+
+Crear una nota añade el artículo a Guardados. Las notas del original y de la
+traducción son independientes y se incluyen en la copia de seguridad de la
+aplicación. **Eliminar nota** pide confirmación antes de borrar su contenido.
+
+En el lector, el radar está junto a **Volver al feed** y la búsqueda aparece
+bajo la portada. La barra de acciones reúne archivar, guardar, descargar,
+traducir, tamaño de letra, modo lectura y abrir original; **No me interesa**
+queda al extremo derecho.
+
+En el generador de citas, **Mostrar idioma original** alterna con la traducción.
+Si creaste la cita desde el artículo traducido, primero permite seleccionar
+el pasaje correspondiente del original. Después puedes alternar entre ambas
+versiones sin perder la selección ni reconstruir el original mediante traducción.

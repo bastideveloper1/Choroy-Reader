@@ -9,6 +9,7 @@ ApplicationWindow {
     visible: true
     width: 900; height: 760
     minimumWidth: 700; minimumHeight: 500
+    onClosing: function(close) { if (note_editor.visible) { close.accepted = note_editor.save(); } }
     title: "Choroy Reader"
     property var s: backend.state
     property var p: s.palette
@@ -35,7 +36,7 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Escape"; context: Qt.WindowShortcut
-        enabled: window.reading_mode && !image_viewer.visible && !quote_dialog.visible
+        enabled: window.reading_mode && !image_viewer.visible && !quote_dialog.visible && !note_editor.visible
         onActivated: window.leave_reading_mode()
     }
     property bool settings_open: false
@@ -252,7 +253,7 @@ ApplicationWindow {
         RowLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
             Rectangle {
-                objectName: "sidebarPanel"; visible: window.sidebar_visible && !window.reading_mode
+                objectName: "sidebarPanel"; visible: window.sidebar_visible && !window.reading_mode && !note_editor.visible
                 Layout.preferredWidth: 280; Layout.fillHeight: true; color: p.panel
                 ColumnLayout {
                     anchors.fill: parent; spacing: 2
@@ -403,6 +404,10 @@ ApplicationWindow {
             Loader {
                 id: main_loader; Layout.fillWidth: true; Layout.fillHeight: true
                 sourceComponent: s.reader.link ? reader_page : s.page === "about" ? about_page : s.page === "storage" ? storage_page : s.page === "design" ? design_page : s.page === "radar" ? radar_page : s.page === "sources" ? sources_page : feed_page
+            }
+            Item {
+                visible: note_editor.visible && !note_editor.expanded
+                Layout.preferredWidth: note_editor.width + 24; Layout.fillHeight: true
             }
         }
     }
@@ -669,15 +674,23 @@ ApplicationWindow {
                 x: (reader_scroll.availableWidth - width) / 2; spacing: 12
                 RowLayout {
                     visible: !window.reading_mode; Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 12
-                    Action { text: "← Volver al feed"; onClicked: backend.close_article() }
+                    Action { objectName: "backToFeed"; text: "← Volver al feed"; onClicked: backend.close_article() }
+                    RadarBadge { objectName: "readerRadarBadge"; article: s.reader; visible: s.radar; Layout.minimumWidth: 100 }
                     Item { Layout.fillWidth: true }
-                    Action { objectName: "enterReadingMode"; text: "⛶ Modo lectura"; onClicked: window.enter_reading_mode() }
                 }
-                RowLayout { objectName: "readerToolbar"; visible: !window.reading_mode; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
-                    Search { id: body_search; objectName: "body_search"; placeholderText: "Buscar en artículo"; Layout.fillWidth: true; Layout.minimumWidth: 80; onTextEdited: backend.search_document(text); onAccepted: backend.next_match() }
-                    Action { text: s.reader.translating ? "Traduciendo…" : s.reader.translated ? "Ver original" : "Leer en español"; active: true; enabled: s.reader.ready && !s.reader.translating; onClicked: backend.translate_article() }
+                Image { objectName: "readerCover"; source: s.reader.image || ""; visible: s.reader.show_image && source.toString().length > 0; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; Layout.preferredHeight: visible ? Math.min(280,width*9/16) : 0; fillMode: Image.PreserveAspectCrop; clip: true; smooth: true; mipmap: true }
+                Search { id: body_search; objectName: "body_search"; visible: !window.reading_mode; placeholderText: "Buscar en artículo"; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; onTextEdited: backend.search_document(text); onAccepted: backend.next_match() }
+                RowLayout {
+                    objectName: "readerToolbar"; visible: !window.reading_mode
+                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 8
+                    Flow {
+                        Layout.fillWidth: true; Layout.preferredHeight: childrenRect.height; spacing: 6
+                        IconAction { kind: "archive"; stateActive: !!s.reader.archived; hint: s.reader.archived ? "Quitar de Archivados" : "Archivar artículo"; onClicked: backend.toggle_archived(s.reader.link) }
+                        IconAction { kind: "save"; filled: !!s.reader.saved; hint: filled ? "Quitar guardado" : "Guardar"; onClicked: backend.toggle_saved(s.reader.link) }
+                        IconAction { objectName: "readerDownload"; kind: s.reader.downloaded ? "delete" : "download"; filled: !!s.reader.downloaded; enabled: !s.reader.downloading; hint: filled ? "Eliminar descarga" : "Descargar"; onClicked: backend.toggle_download(s.reader.link) }
+                        Action { objectName: "readerTranslate"; compact: true; text: s.reader.translating ? "Traduciendo…" : s.reader.translated ? "Ver original" : "Leer en español"; active: true; enabled: s.reader.ready && !s.reader.translating; onClicked: backend.translate_article() }
                     Action {
-                        text: "Aa"; objectName: "readerFontButton"
+                        text: "Aa"; compact: true; objectName: "readerFontButton"
                         ToolTip.visible: hovered; ToolTip.text: "Tamaño de letra"
                         onClicked: font_menu.open()
                         Menu {
@@ -694,24 +707,32 @@ ApplicationWindow {
                             }
                         }
                     }
-                    Action { text: "Abrir original ↗"; onClicked: backend.open_url(s.reader.link) }
-                }
-                Image { source: s.reader.image || ""; visible: s.reader.show_image && source.toString().length > 0; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; Layout.preferredHeight: visible ? Math.min(280,width*9/16) : 0; fillMode: Image.PreserveAspectCrop; clip: true; smooth: true; mipmap: true }
-                RowLayout { visible: !window.reading_mode; Layout.leftMargin: 18; Layout.rightMargin: 18; Layout.fillWidth: true
-                    IconAction { kind: "dismiss"; stateActive: !!s.reader.dismissed; hint: s.reader.dismissed ? "Deshacer descarte" : "No me interesa · Volver al feed"; onClicked: backend.toggle_dismissed(s.reader.link) }
-                    IconAction { kind: "archive"; stateActive: !!s.reader.archived; hint: s.reader.archived ? "Quitar de Archivados" : "Archivar artículo"; onClicked: backend.toggle_archived(s.reader.link) }
-                    IconAction { kind: "save"; filled: !!s.reader.saved; hint: filled ? "Quitar guardado" : "Guardar"; onClicked: backend.toggle_saved(s.reader.link) }
-                    IconAction { kind: s.reader.downloaded ? "delete" : "download"; filled: !!s.reader.downloaded; enabled: !s.reader.downloading; hint: filled ? "Eliminar descarga" : "Descargar"; onClicked: backend.toggle_download(s.reader.link) }
-                    RadarBadge { objectName: "readerRadarBadge"; article: s.reader; visible: s.radar; Layout.minimumWidth: 100 }
+                        Action { objectName: "enterReadingMode"; compact: true; text: "⛶ Modo lectura"; onClicked: window.enter_reading_mode() }
+                        Action { objectName: "readerOpenOriginal"; compact: true; text: "Abrir original ↗"; onClicked: backend.open_url(s.reader.link) }
+                    }
+                    IconAction { objectName: "readerDismiss"; Layout.alignment: Qt.AlignRight | Qt.AlignBottom; kind: "dismiss"; stateActive: !!s.reader.dismissed; hint: s.reader.dismissed ? "Deshacer descarte" : "No me interesa · Volver al feed"; onClicked: backend.toggle_dismissed(s.reader.link) }
                 }
                 Action { text: "Colecciones"; visible: s.reader.saved && !window.reading_mode; compact: true; Layout.leftMargin: 18; onClicked: { article_collections.article_link=s.reader.link; article_collections.open(); } }
                 Label { text: "WEB · Publicación extraída del sitio"; visible: !!s.reader.web_extracted; color: p.accent; Layout.leftMargin: 22 }
                 SectionTitle { text: s.reader.title || ""; font.pixelSize: 23; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
                 Label { visible: !window.reading_mode || reader_scroll.marking || !s.reader.ready; text: (reader_scroll.marking ? reader_scroll.erasing ? "Borrador activo · Haz clic o arrastra para quitar bloques destacados completos. " : "Destacador activo · Arrastra para pintar; repasar conserva el destacado. " : "") + (s.reader.status || ""); color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
                 TextEdit {
-                    id: article_text; objectName: "article_text"; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                    id: article_text; objectName: "article_text"; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 66
                     Layout.bottomMargin: 28
-                    Layout.preferredHeight: Math.max(contentHeight, images_bottom)
+                    Layout.preferredHeight: Math.max(contentHeight, images_bottom, notes_bottom)
+                    property var note_layout: []
+                    property real notes_bottom: note_layout.reduce((bottom, note) => Math.max(bottom, note.y + 38), 0)
+                    property var notes: s.reader.notes || []
+                    onNotesChanged: note_layout_timer.restart()
+                    Timer { id: note_layout_timer; interval: 0; onTriggered: article_text.update_note_layout() }
+                    function update_note_layout() {
+                        let bottom = -38;
+                        note_layout = notes.slice().sort((a,b) => a.position - b.position).map(note => {
+                            const y = Math.max(positionToRectangle(note.position).y, bottom + 38);
+                            bottom = y;
+                            return {note: note, y: y};
+                        });
+                    }
                     property var image_entries: s.reader.inline_images || []
                     property var image_layout: []
                     property real images_bottom: image_layout.reduce((bottom, entry) => Math.max(bottom, entry.y + entry.height + 12), 0)
@@ -729,12 +750,12 @@ ApplicationWindow {
                     }
                     // Coalesce changes and measure after Qt has reflowed the text.
                     onImage_entriesChanged: Qt.callLater(update_image_layout)
-                    onContentHeightChanged: Qt.callLater(update_image_layout)
-                    onWidthChanged: Qt.callLater(update_image_layout)
-                    onFontChanged: Qt.callLater(update_image_layout)
+                    onContentHeightChanged: { Qt.callLater(update_image_layout); note_layout_timer.restart(); }
+                    onWidthChanged: { Qt.callLater(update_image_layout); note_layout_timer.restart(); }
+                    onFontChanged: { Qt.callLater(update_image_layout); note_layout_timer.restart(); }
                     Connections {
                         target: backend
-                        function onDocument_layout_changed() { Qt.callLater(article_text.update_image_layout); }
+                        function onDocument_layout_changed() { Qt.callLater(article_text.update_image_layout); note_layout_timer.restart(); }
                     }
                     text: s.reader.body || ""; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: !reader_scroll.marking; persistentSelection: true
                     wrapMode: TextEdit.Wrap; color: p.text; font.pixelSize: s.reader.font_size || 16; selectionColor: p.accent; selectedTextColor: p.accent_text
@@ -755,6 +776,25 @@ ApplicationWindow {
                                 ToolTip.visible: containsMouse; ToolTip.delay: 600
                                 ToolTip.text: "Clic para ampliar"
                             }
+                        }
+                    }
+                    Repeater {
+                        model: article_text.note_layout
+                        delegate: Rectangle {
+                            required property var modelData
+                            objectName: "articleNoteMarker"
+                            x: article_text.width + 10; y: modelData.y
+                            width: 32; height: 32; radius: 3; rotation: -3
+                            color: modelData.note.color; border.color: Qt.darker(color, 1.2)
+                            Rectangle { anchors.right: parent.right; anchors.bottom: parent.bottom; width: 8; height: 8; color: Qt.darker(parent.color, 1.15) }
+                            Text { anchors.centerIn: parent; text: "≡"; color: "#443d30"; font.pixelSize: 23 }
+                            MouseArea {
+                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                                onClicked: note_editor.show_note(parent.modelData.note)
+                                ToolTip.visible: containsMouse; ToolTip.delay: 350
+                                ToolTip.text: parent.modelData.note.text.slice(0, 180) || "Abrir nota"
+                            }
+                            Accessible.name: "Abrir nota: " + modelData.note.text.slice(0, 80)
                         }
                     }
                     property string attached_text: ""
@@ -813,6 +853,7 @@ ApplicationWindow {
                             onTriggered: article_text.copy()
                         }
                         MenuSeparator {}
+                        MenuItem { objectName: "createArticleNote"; text: "Añadir nota aquí…"; enabled: s.reader.ready; onTriggered: { const note = backend.create_note(reader_scroll.menu_position); if (note.id) note_editor.show_note(note); } }
                         MenuItem { text: "Guardar punto de lectura aquí"; onTriggered: backend.save_reading_position(reader_scroll.menu_position) }
                         MenuItem { text: "Crear imagen de la cita…"; enabled: reader_scroll.selected_quote.length > 0; onTriggered: {backend.prepare_quote(reader_scroll.selected_quote);if(reader_scroll.selected_quote.length<=500)quote_dialog.open();} }
                         Menu {
@@ -1372,6 +1413,11 @@ ApplicationWindow {
         }
     }
 
+    NoteEditor {
+        id: note_editor
+        hostWindow: window; markerColors: s.marker_colors
+        readerIdentity: (s.reader.link || "") + (s.reader.translated ? "|es" : "|original")
+    }
     FileDialog { id: category_icon_file; title: "Icono de la categoría"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp *.svg *.ico)"]; onAccepted: category_dialog.icon_url = selectedFile.toString() }
     FileDialog { id: icon_file; title: "Icono de la fuente"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp)"]; onAccepted: source_dialog.icon_url=selectedFile.toString() }
 
@@ -1394,7 +1440,10 @@ ApplicationWindow {
         contentItem: RowLayout {
             spacing: 18
             ColumnLayout { Layout.preferredWidth: 210; Layout.alignment: Qt.AlignTop; spacing: 14
-                Button { text: quote_dialog.spanish ? "Mostrar idioma original" : "Mostrar traducción"; enabled: !s.quote_is_translated; onClicked: {quote_dialog.spanish=!quote_dialog.spanish;quote_dialog.regenerate();}
+                Button { objectName: "quoteLanguageButton"; text: quote_dialog.spanish ? "Mostrar idioma original" : "Mostrar traducción"; onClicked: {
+                    if (quote_dialog.spanish && !s.quote_has_original) quote_original_dialog.open();
+                    else { quote_dialog.spanish = !quote_dialog.spanish; quote_dialog.regenerate(); }
+                }
                     background: Rectangle { color: parent.hovered?"#c2c2c2":"#cccccc"; radius:6 } contentItem: Text { text:parent.text;color:"#252525";padding:10;wrapMode:Text.Wrap } Layout.fillWidth:true
                 }
                 CheckBox {
@@ -1448,7 +1497,7 @@ ApplicationWindow {
                     background:Rectangle { color:s.themes[quote_dialog.color_index].key==="periodico"?"#e6e6e6":"#232a34";radius:6 }
                     contentItem:Text {text:parent.text;color:s.themes[quote_dialog.color_index].color;wrapMode:Text.Wrap;padding:10}
                 }
-                Label { text:s.quote_busy?"Actualizando vista previa…":s.quote_is_translated?"Para citar el original exacto, selecciona el texto en Ver original.":"Vista previa · 2160 × 2160 · PNG o JPG"; color:"#555555"; wrapMode:Text.Wrap; Layout.fillWidth:true }
+                Label { text:s.quote_busy?"Actualizando vista previa…":s.quote_is_translated && !s.quote_has_original?"Mostrar idioma original permite seleccionar las palabras exactas de la fuente.":"Vista previa · 2160 × 2160 · PNG o JPG"; color:"#555555"; wrapMode:Text.Wrap; Layout.fillWidth:true }
             }
             Image { source:s.quote_preview; Layout.fillWidth:true; Layout.fillHeight:true; fillMode:Image.PreserveAspectFit; smooth:true; mipmap:true; cache:false }
         }
@@ -1477,6 +1526,27 @@ ApplicationWindow {
         anchors.centerIn: parent; modal: true; visible: s.portability_busy; closePolicy: Popup.NoAutoClose
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
         contentItem: Label { text: "Procesando archivo local…"; color: p.text; padding: 20 }
+    }
+    Dialog {
+        id: quote_original_dialog; objectName: "quoteOriginalDialog"; anchors.centerIn: parent
+        modal: true; title: "Seleccionar fragmento original"
+        width: Math.min(720, window.width - 40); height: Math.min(560, window.height - 40)
+        onOpened: original_quote_text.deselect()
+        contentItem: ColumnLayout {
+            Label { text: "Selecciona el pasaje original correspondiente a tu cita (hasta 500 caracteres)."; wrapMode: Text.Wrap; Layout.fillWidth: true; color: p.text }
+            ScrollView {
+                Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+                TextArea { id: original_quote_text; objectName: "quoteOriginalText"; text: s.quote_original_body || ""; readOnly: true; selectByMouse: true; persistentSelection: true; wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText; color: p.text; selectionColor: p.accent }
+            }
+            Label { text: original_quote_text.selectedText.length + " / 500 caracteres"; color: p.muted }
+        }
+        footer: RowLayout {
+            Item { Layout.fillWidth: true }
+            Button { text: "Cancelar"; onClicked: quote_original_dialog.close() }
+            Button { objectName: "useOriginalQuote"; text: "Usar selección"; enabled: original_quote_text.selectedText.trim().length > 0 && original_quote_text.selectedText.trim().length <= 500
+                onClicked: { if (backend.set_quote_original(original_quote_text.selectedText)) { quote_original_dialog.close(); quote_dialog.spanish = false; quote_dialog.regenerate(); } }
+            }
+        }
     }
     FileDialog { id:quote_file;title:"Guardar cita";fileMode:FileDialog.SaveFile;currentFolder:s.downloads_folder;nameFilters:["Imagen PNG (*.png)","Imagen JPG (*.jpg *.jpeg)"];defaultSuffix:selectedNameFilter.index===1?"jpg":"png";onAccepted:backend.export_quote(selectedFile.toString()) }
     Dialog { id:error_dialog;anchors.centerIn:parent;modal:true;title:"Choroy Reader";standardButtons:Dialog.Ok;width:Math.min(480,window.width-40)

@@ -355,7 +355,7 @@ class QtTests(unittest.TestCase):
         self.backend.open_article(self.article['link'])
         for _ in range(150):
             QTest.qWait(20)
-            if self.backend.reader_body:
+            if self.backend._document_key and self.backend._document_key[1] == "original":
                 break
         self.assertTrue(self.backend.reader_body)
         self.backend.mark(2, 35, '#b9a0ff')
@@ -363,7 +363,7 @@ class QtTests(unittest.TestCase):
             self.backend.translate_article()
             for _ in range(100):
                 QTest.qWait(20)
-                if not self.backend.translating:
+                if not self.backend.translating and self.backend._document_key and self.backend._document_key[1] == "es":
                     break
         self.assertTrue(self.backend.translated)
         self.assertEqual(self.backend.marks, [])
@@ -1007,6 +1007,234 @@ class QtTests(unittest.TestCase):
         self.assertEqual(self.backend.state['articles'],[])
         self.backend.toggle_download(self.article['link'])
         self.assertFalse(self.service.library.contains('descargas',self.article['link']))
+
+    def test_notes_persist_with_images_and_are_scoped_to_article_revision(self):
+        from choroy_reader.reader_store import ReaderStore
+        from PIL import Image
+        self.backend.reader = self.article
+        self.backend.reader_body = self.article['cuerpo']
+        document = QTextDocument(self.article['cuerpo'])
+        self.backend.attach_document(document)
+        note = self.backend.create_note(25)
+        self.assertEqual(note['position'], 25)
+        self.assertTrue(self.service.library.contains('guardados', self.article['link']))
+        path = Path(self.tmp.name) / 'note.png'
+        Image.new('RGB', (20, 10), 'red').save(path)
+        image = self.backend.import_note_image(QUrl.fromLocalFile(str(path)).toString())
+        self.assertTrue(image.startswith('data:image/png;base64,'))
+        self.assertTrue(self.backend.save_note(note['id'], 'Una idea 😀', '#f5b8d5', [image]))
+        path.unlink()
+        store = ReaderStore(self.service.reader_store.path)
+        saved = store.read_notes(self.article['link'], 'original', self.article['cuerpo'])
+        self.assertEqual(saved[0]['text'], 'Una idea 😀')
+        self.assertEqual(saved[0]['images'], [image])
+        self.assertEqual(store.read_notes(self.article['link'], 'es', self.article['cuerpo']), [])
+        self.assertEqual(store.read_notes(self.article['link'], 'original', 'Otra revisión'), [])
+        self.backend.translated = True
+        self.assertFalse(self.backend.save_note(note['id'], 'Incorrecto', '#ffe88f', []))
+        self.backend.translated = False
+        self.assertTrue(self.backend.delete_note(note['id']))
+        self.assertEqual(self.backend.reader_notes(), [])
+
+    def test_note_editor_create_autosave_expand_and_reopen(self):
+        root = self.load_qml()
+        self.backend.open_article(self.article['link'])
+        for _ in range(150):
+            QTest.qWait(20)
+            if self.backend._document_key:
+                break
+        action = root.findChild(QObject, 'createArticleNote')
+        self.assertTrue(QMetaObject.invokeMethod(action, 'triggered'))
+        QTest.qWait(100)
+        editor = root.findChild(QObject, 'noteEditor')
+        self.assertTrue(editor.property('visible'))
+        self.assertFalse(editor.property('modal'))
+        self.assertFalse(root.findChild(QQuickItem, 'sidebarPanel').isVisible())
+        reader = root.findChild(QQuickItem, 'reader_page')
+        self.assertLessEqual(reader.width(), editor.property('x'))
+        gray = self.visual_item(editor.property('contentItem'), 'noteTheme_gris')
+        self.assertTrue(QMetaObject.invokeMethod(gray, 'clicked'))
+        self.assertTrue(editor.property('dark'))
+        self.assertEqual(self.backend.reader_notes()[0]['theme'], 'gris')
+        text = root.findChild(QObject, 'noteText')
+        text.setProperty('text', 'Recordar este pasaje')
+        QTest.qWait(550)
+        self.assertEqual(self.backend.reader_notes()[0]['text'], 'Recordar este pasaje')
+        small_width = editor.property('width')
+        editor.setProperty('expanded', True)
+        QTest.qWait(30)
+        self.assertGreater(editor.property('width'), small_width)
+        self.assertTrue(QMetaObject.invokeMethod(editor, 'finish'))
+        QTest.qWait(50)
+        marker = self.visual_item(root.findChild(QQuickItem, 'article_text'), 'articleNoteMarker')
+        self.assertIsNotNone(marker)
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier,
+                         marker.mapToScene(marker.boundingRect().center()).toPoint())
+        QTest.qWait(50)
+        self.assertTrue(editor.property('visible'))
+        self.assertEqual(text.property('textDocument').textDocument().toPlainText(), 'Recordar este pasaje')
+        note_id = self.backend.reader_notes()[0]['id']
+        self.assertTrue(editor.property('dark'))
+        text.setProperty('text', 'Cambios antes de volver al feed')
+        self.backend.close_article()
+        QTest.qWait(60)
+        self.assertFalse(editor.property('visible'))
+        record = self.service.reader_store.note_record(note_id)
+        self.assertEqual(record[3]['text'], 'Cambios antes de volver al feed')
+
+
+    def test_rich_note_image_positions_flow_roundtrip_and_legacy_migration(self):
+        from PIL import Image
+        self.backend.reader = self.article
+        self.backend.reader_body = self.article['cuerpo']
+        article_document = QTextDocument(self.article['cuerpo'])
+        self.backend.attach_document(article_document)
+        note = self.backend.create_note(10)
+        path = Path(self.tmp.name) / 'figure.png'
+        Image.new('RGB', (180, 120), 'green').save(path)
+        source = self.backend.import_note_image(QUrl.fromLocalFile(str(path)).toString())
+        document = QTextDocument()
+        document.setTextWidth(320)
+        document.setPlainText('Antes.\nDespués de la imagen. ' * 8)
+        original_text = document.toPlainText()
+        position = self.backend.note_insert_image(document, 7, source, 'left')
+        self.assertEqual(position, 7)
+        self.assertEqual(document.toPlainText()[7], '\ufffc')
+        entries = self.backend.note_image_layout(document)
+        self.assertEqual(entries[0]['alignment'], 'left')
+        self.assertGreater(entries[0]['height'], 0)
+        position = self.backend.note_change_image(document, position, 45, 'right', 110)
+        self.assertEqual(position, 44)
+        self.assertEqual(self.backend.note_image_layout(document)[0]['alignment'], 'right')
+        self.assertEqual(document.toPlainText().replace('\ufffc', ''), original_text)
+        self.assertTrue(self.backend.save_note_document(note['id'], document, '#a8dcff', 'gris'))
+        path.unlink()
+        restored = QTextDocument()
+        restored.setTextWidth(320)
+        restored.setHtml(self.backend.note_html(note['id']))
+        entries = self.backend.note_image_layout(restored)
+        self.assertEqual(entries[0]['position'], position)
+        self.assertEqual(entries[0]['alignment'], 'right')
+        self.assertEqual(entries[0]['width'], 110)
+        self.assertTrue(self.backend.note_remove_image(restored, position))
+        self.assertEqual(restored.toPlainText(), original_text)
+        restored.undo()
+        self.assertEqual(len(self.backend.note_image_layout(restored)), 1)
+        self.backend.note_change_image(restored, position, position, 'inline', 280)
+        restored.setTextWidth(160)
+        self.assertLessEqual(self.backend.note_image_layout(restored)[0]['width'], 148)
+        self.assertEqual(self.service.reader_store.note_record(note['id'])[3]['theme'], 'gris')
+        legacy = self.backend.create_note(20)
+        self.backend.save_note(legacy['id'], 'Literal <b>sin formato</b>', '#ffe88f', [source])
+        restored.setHtml(self.backend.note_html(legacy['id']))
+        self.assertIn('Literal <b>sin formato</b>', restored.toPlainText())
+        self.assertEqual(len(self.backend.note_image_layout(restored)), 1)
+        self.assertGreater(self.backend.note_image_layout(restored)[0]['height'], 0)
+
+    def test_note_image_controls_insert_at_cursor_align_and_remove(self):
+        from PIL import Image
+        root = self.load_qml()
+        self.backend.open_article(self.article['link'])
+        for _ in range(150):
+            QTest.qWait(20)
+            if self.backend._document_key:
+                break
+        QMetaObject.invokeMethod(root.findChild(QObject, 'createArticleNote'), 'triggered')
+        QTest.qWait(50)
+        editor = root.findChild(QObject, 'noteEditor')
+        text = root.findChild(QQuickItem, 'noteText')
+        text.setProperty('text', '<p>Antes.</p><p>Un pasaje que rodea la imagen. ' + 'Texto de prueba. ' * 30 + '</p>')
+        path = Path(self.tmp.name) / 'figure.png'
+        Image.new('RGB', (120, 80), 'green').save(path)
+        source = self.backend.import_note_image(QUrl.fromLocalFile(str(path)).toString())
+        position = self.backend.note_insert_image(text.property('textDocument'), 7, source, 'left')
+        editor.setProperty('selectedImage', position)
+        QTest.qWait(100)
+        handle = self.visual_item(text, 'noteImageHandle')
+        self.assertIsNotNone(handle)
+        self.assertGreater(handle.height(), 0)
+        right = self.visual_item(editor.property('contentItem'), 'noteImageAlign_right')
+        self.assertTrue(QMetaObject.invokeMethod(right, 'clicked'))
+        QTest.qWait(80)
+        self.assertEqual(self.backend.note_image_layout(text.property('textDocument'))[0]['alignment'], 'right')
+        handle = self.visual_item(text, 'noteImageHandle')
+        origin = handle.mapToScene(handle.boundingRect().center()).toPoint()
+        destination = origin + QPoint(-100, 110)
+        QTest.mousePress(root, Qt.LeftButton, Qt.NoModifier, origin)
+        QTest.mouseMove(root, origin + QPoint(-25, 20), 40)
+        QTest.mouseMove(root, destination, 80)
+        QTest.mouseRelease(root, Qt.LeftButton, Qt.NoModifier, destination)
+        QTest.qWait(80)
+        self.assertNotEqual(self.backend.note_image_layout(text.property('textDocument'))[0]['position'], position)
+        remove = self.visual_item(text, 'removeNoteImage')
+        self.assertLessEqual(remove.width(), 24)
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, remove.mapToScene(remove.boundingRect().center()).toPoint())
+        QTest.qWait(550)
+        self.assertEqual(self.backend.note_image_layout(text.property('textDocument')), [])
+        self.assertNotIn('<img ', self.backend.reader_notes()[0]['html'])
+
+    def test_quote_language_switch_preserves_exact_original_and_translation(self):
+        from PIL import Image
+        self.backend.reader = dict(self.article, cuerpo='The original words. Another sentence.')
+        self.backend.translated = True
+        self.backend.prepare_quote('Las palabras originales.')
+        self.assertFalse(self.backend.state['quote_has_original'])
+        self.assertFalse(self.backend.set_quote_original('Palabras inventadas'))
+        self.assertTrue(self.backend.set_quote_original('The original words.'))
+        with patch('choroy_reader.core.create_quote_image', return_value=Image.new('RGB', (40, 40))) as render:
+            self.backend.update_quote(False, False, False, 'gris')
+            self.assertEqual(render.call_args.args[0], 'The original words.')
+            with patch.object(self.service, 'translate', side_effect=AssertionError('Already translated')):
+                self.backend.update_quote(True, False, False, 'gris')
+                for _ in range(100):
+                    QTest.qWait(20)
+                    if not self.backend.quote_busy:
+                        break
+            self.assertEqual(render.call_args.args[0], 'Las palabras originales.')
+            self.backend.update_quote(False, False, False, 'gris')
+            self.assertEqual(render.call_args.args[0], 'The original words.')
+
+    def test_reader_action_positions_and_original_quote_picker(self):
+        root = self.load_qml()
+        self.backend.open_article(self.article['link'])
+        for _ in range(150):
+            QTest.qWait(20)
+            if self.backend._document_key:
+                break
+        self.service.config['radar_activo'] = True
+        self.backend.publish()
+        QTest.qWait(40)
+        item = lambda name: root.findChild(QQuickItem, name)
+        radar, back = item('readerRadarBadge'), item('backToFeed')
+        self.assertEqual(radar.parentItem(), back.parentItem())
+        cover, search = item('readerCover'), item('body_search')
+        self.assertGreaterEqual(search.y(), cover.y() + cover.height())
+        toolbar = item('readerToolbar')
+        self.assertEqual(item('readerDismiss').parentItem(), toolbar)
+        flow = item('readerTranslate').parentItem()
+        self.assertEqual(flow.parentItem(), toolbar)
+        names = [child.objectName() for child in flow.childItems()]
+        self.assertLess(names.index('readerDownload'), names.index('readerTranslate'))
+        for name in ('readerFontButton', 'enterReadingMode', 'readerOpenOriginal'):
+            self.assertIn(name, names)
+        self.backend.translated = True
+        self.backend.prepare_quote('Texto traducido')
+        dialog = root.findChild(QObject, 'quote_dialog')
+        QMetaObject.invokeMethod(dialog, 'open')
+        QTest.qWait(30)
+        button = root.findChild(QObject, 'quoteLanguageButton')
+        self.assertTrue(button.property('enabled'))
+        QMetaObject.invokeMethod(button, 'clicked')
+        QTest.qWait(30)
+        picker = root.findChild(QObject, 'quoteOriginalDialog')
+        self.assertTrue(picker.property('visible'))
+        original = root.findChild(QObject, 'quoteOriginalText')
+        QMetaObject.invokeMethod(original, 'selectAll')
+        QMetaObject.invokeMethod(root.findChild(QObject, 'useOriginalQuote'), 'clicked')
+        QTest.qWait(30)
+        self.assertFalse(picker.property('visible'))
+        self.assertFalse(dialog.property('spanish'))
+        self.assertEqual(self.backend.quote_data['original_text'], self.article['cuerpo'])
 
     def load_qml(self):
         self.engine=QQmlApplicationEngine()

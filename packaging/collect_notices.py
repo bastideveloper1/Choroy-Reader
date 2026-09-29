@@ -72,11 +72,13 @@ def collect(output, bundled_binaries=()):
     if bundled_binaries and platform.system() == 'Linux':
         import subprocess
         owners = set()
-        for _, source, *_ in bundled_binaries:
-            if source.startswith(('/usr/lib/', '/lib/')):
-                found = subprocess.run(['dpkg-query', '-S', source], capture_output=True, text=True)
-                if found.returncode == 0:
-                    owners.update(line.split(': ', 1)[0] for line in found.stdout.splitlines())
+        sources = sorted({source for _, source, *_ in bundled_binaries
+                          if source.startswith(('/usr/lib/', '/lib/'))})
+        # One package-database scan per batch instead of one per shared library.
+        for offset in range(0, len(sources), 64):
+            found = subprocess.run(['dpkg-query', '-S', *sources[offset:offset + 64]],
+                                   capture_output=True, text=True)
+            owners.update(line.split(': ', 1)[0] for line in found.stdout.splitlines() if ': ' in line)
         for owner in sorted(owners):
             package = owner.split(':')[0]
             notice = Path('/usr/share/doc') / package / 'copyright'
