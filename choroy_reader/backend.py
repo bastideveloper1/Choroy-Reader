@@ -49,9 +49,12 @@ class Backend(QObject):
         self.asset_dir = Path(asset_dir)
         from .about import load_about
         self.about_info = load_about(self.asset_dir)
+        self.update_info = dict(busy=False, available=False, version='', notes='', url='',
+                                message='Consulta manual en GitHub; incluye versiones beta.')
         self.notice_title = ''
         self.notice_body = '' 
         self.page, self.category, self.source, self.query = 'feed', '', '', ''
+        self.navigation_history = []
         self.collection_filter = ''
         self.status = 'Listo'
         self.busy = False
@@ -66,6 +69,7 @@ class Backend(QObject):
         self.reader_status = ''
         self.translated = False
         self.translating = False
+        self.translation_cancel = threading.Event()
         self.downloads = set()
         self.bulk_busy = False
         self.read_batch = set()
@@ -233,7 +237,7 @@ class Backend(QObject):
         if self.page == 'guardados' and self.collection_filter:
             links = next((set(item.get('links', [])) for item in cfg.get('colecciones', []) if item['id'] == self.collection_filter), set())
             articles = [article for article in articles if article['link'] in links]
-        self._state = dict(marker_colors=MARKER_COLORS, about=self.about_info, notice_title=self.notice_title, notice_body=self.notice_body, storage=self.storage_info, page=self.page, category=self.category, source=self.source, query=self.query,
+        self._state = dict(updates=self.update_info, marker_colors=MARKER_COLORS, about=self.about_info, notice_title=self.notice_title, notice_body=self.notice_body, storage=self.storage_info, page=self.page, category=self.category, source=self.source, query=self.query,
                            link_sources=sorted(
                                [src for cat in categories if not self.category or cat['name'] == self.category
                                 for src in cat['sources']
@@ -262,6 +266,25 @@ class Backend(QObject):
                            downloads_folder=QUrl.fromLocalFile(QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)).toString())
         self.article_model.update(self._state['articles'])
         self.changed.emit()
+
+    @Slot()
+    def check_updates(self):
+        if self.update_info['busy']:
+            return
+        from .updates import check_updates
+        self.update_info = dict(busy=True, available=False, version='', notes='', url='',
+                                message='Buscando actualizaciones…')
+        def done(value, error):
+            if error:
+                message = 'No se pudo consultar GitHub. Comprueba la conexión e inténtalo de nuevo.'
+                if 'HTTP Error 404' in error:
+                    message = 'No se encontró el repositorio público de actualizaciones. Comprueba que la publicación y el repositorio sean públicos.'
+                elif 'HTTP Error 403' in error or 'HTTP Error 429' in error:
+                    message = 'GitHub ha limitado la consulta. Inténtalo de nuevo más tarde.'
+                self.update_info.update(busy=False, message=message)
+            else:
+                self.update_info = value
+        self.background(lambda: check_updates(self.about_info['repository'], self.about_info['version']), done)
 
     def startup(self, allow_network=True):
         cached = bool(self.service.articles)
@@ -308,6 +331,12 @@ class Backend(QObject):
 
     @Slot(str, str, str)
     def navigate(self, page, category='', source=''):
+        current = (self.page, self.category, self.source)
+        if current != (page, category, source):
+            self.navigation_history.append(current)
+            self.navigation_history = self.navigation_history[-100:]
+        self.translation_cancel.set()
+        self.translating = False
         self.reader_token += 1
         self.page, self.category, self.source = page, category, source
         self.reader = None
@@ -315,6 +344,16 @@ class Backend(QObject):
         self.publish()
         if page == 'storage':
             self.refresh_storage()
+
+    @Slot()
+    def go_back(self):
+        if self.reader:
+            self.close_article()
+        elif self.navigation_history:
+            destination = self.navigation_history.pop()
+            history = self.navigation_history[:]
+            self.navigate(*destination)
+            self.navigation_history = history
 
     @Slot()
     def refresh_storage(self):
@@ -490,6 +529,7 @@ class Backend(QObject):
 
     @Slot(str)
     def open_article(self, link):
+        self.translation_cancel.set()
         self.resume_link = None
         article = self.service.article(link)
         if not article:
@@ -515,9 +555,20 @@ class Backend(QObject):
 
     @Slot()
     def close_article(self):
+        self.translation_cancel.set()
+        self.translating = False
         self.reader_token += 1
         self.reader = None
         self.reader_body = ''
+        self.publish()
+
+    @Slot()
+    def cancel_translation(self):
+        if not self.translating:
+            return
+        self.translation_cancel.set()
+        self.translating = False
+        self.reader_status = 'Traducción cancelada · Puedes reintentar'
         self.publish()
 
     @Slot()
@@ -531,9 +582,11 @@ class Backend(QObject):
             self.reader_status = self.reader.get('estado_contenido', '')
             self.publish()
             return
+        cancel = threading.Event()
+        self.translation_cancel = cancel
         token, link = self.reader_token, self.reader['link']
         def done(value, error):
-            if token != self.reader_token:
+            if token != self.reader_token or cancel.is_set():
                 return
             self.translating = False
             if error:
@@ -549,7 +602,7 @@ class Backend(QObject):
         else:
             self.translating = True
             self.publish()
-            self.background(lambda article=dict(self.reader): self.service.translate_article(article), done)
+            self.background(lambda article=dict(self.reader): self.service.translate_article(article, cancel=cancel), done)
 
     def get_article(self, link):
         return self.reader if self.reader and self.reader['link'] == link else self.service.article(link)

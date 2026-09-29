@@ -8,7 +8,7 @@ from unittest.mock import patch
 from pathlib import Path
 from datetime import datetime
 from PySide6.QtCore import QUrl, QObject, Qt, QPoint, QCoreApplication, QMetaObject
-from PySide6.QtGui import QGuiApplication, QTextDocument, QTextCursor
+from PySide6.QtGui import QGuiApplication, QTextDocument, QTextCursor, QColor
 from PySide6.QtQuick import QQuickWindow, QQuickItem
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtTest import QTest
@@ -19,6 +19,85 @@ APP=QGuiApplication.instance() or QGuiApplication([])
 ROOT=Path(__file__).resolve().parent.parent
 
 class QtTests(unittest.TestCase):
+    def test_mouse_back_returns_from_reader_then_previous_section(self):
+        root = self.load_qml()
+        self.backend.navigate('guardados', '', '')
+        self.backend.reader = dict(self.article)
+        self.backend.reader_body = self.article['cuerpo']
+        self.backend.publish()
+        APP.processEvents()
+        QTest.mouseClick(root, Qt.BackButton, Qt.NoModifier, QPoint(450, 350))
+        APP.processEvents()
+        self.assertIsNone(self.backend.reader)
+        self.assertEqual(self.backend.page, 'guardados')
+        QTest.mouseClick(root, Qt.BackButton, Qt.NoModifier, QPoint(450, 350))
+        APP.processEvents()
+        self.assertEqual(self.backend.page, 'feed')
+        self.backend.go_back()
+        self.assertEqual(self.backend.page, 'feed')
+
+    def test_cancel_translation_discards_late_result_and_allows_retry(self):
+        self.backend.reader = dict(self.article)
+        self.backend.reader_body = self.article['cuerpo']
+        jobs = []
+        with patch.object(self.backend, 'background', side_effect=lambda work, done: jobs.append((work, done))):
+            self.backend.translate_article()
+            self.assertTrue(self.backend.translating)
+            self.backend.cancel_translation()
+            self.assertFalse(self.backend.translating)
+            self.backend.translate_article()
+            jobs[0][1]('Resultado cancelado', None)
+            self.assertTrue(self.backend.translating)
+            self.assertEqual(self.backend.reader_body, self.article['cuerpo'])
+            jobs[1][1]('Nueva traducción', None)
+            self.assertTrue(self.backend.translated)
+            self.assertEqual(self.backend.reader_body, 'Nueva traducción')
+
+    def test_cancel_translation_stops_chunks_without_saving(self):
+        import threading
+        cancel = threading.Event()
+        article = dict(self.article, cuerpo='Primero.\n\nSegundo.')
+        def translate(text):
+            cancel.set()
+            return 'First.'
+        with patch('choroy_reader.core.translate_text', side_effect=translate) as request:
+            with self.assertRaisesRegex(ValueError, 'cancelada'):
+                self.service.translate_article(article, cancel=cancel)
+        self.assertEqual(request.call_count, 1)
+        self.assertFalse(self.service.reader_store.read(article['link'])['translation'])
+
+    def test_quote_dialog_background_follows_application_theme(self):
+        root = self.load_qml()
+        dialog = root.findChild(QObject, 'quote_dialog')
+        for theme in ('gris', 'periodico', 'gris'):
+            self.backend.set_theme(theme)
+            APP.processEvents()
+            background = dialog.property('background')
+            self.assertEqual(background.property('color'), QColor(self.backend.palette()['panel']))
+
+    def test_update_check_displays_result_and_allows_retry_after_failure(self):
+        self.backend.navigate('about', '', '')
+        root = self.load_qml()
+        def wait_for_check():
+            for _ in range(100):
+                APP.processEvents()
+                if not self.backend.update_info['busy']:
+                    return
+                QTest.qWait(10)
+            self.fail('La consulta no terminó')
+        with patch('choroy_reader.updates.check_updates', side_effect=OSError('offline')):
+            self.backend.check_updates()
+            wait_for_check()
+        self.assertIn('No se pudo', self.backend.update_info['message'])
+        result = dict(busy=False, available=True, version='v0.2.0', notes='Cambios',
+                      url='https://github.com/bastideveloper1/minimalfeed/releases/tag/v0.2.0',
+                      message='Actualización disponible: v0.2.0')
+        with patch('choroy_reader.updates.check_updates', return_value=result):
+            self.backend.check_updates()
+            wait_for_check()
+        self.assertEqual(self.backend.update_info, result)
+        self.assertEqual(self.visual_item(root, 'updateStatus').property('text'), result['message'])
+
     def setUp(self):
         network = patch('choroy_reader.core.download', side_effect=OSError('Offline test'))
         network.start()

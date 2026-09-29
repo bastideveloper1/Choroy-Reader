@@ -62,10 +62,10 @@ no sustituye la instalación en un equipo limpio. Los paquetes no deben incluir
 .venv/bin/python -m pip install -r requirements_build.txt
 .venv/bin/python -m PyInstaller --noconfirm packaging/choroy_reader.spec
 .venv/bin/python packaging/build_linux.py
-.venv/bin/python packaging/verify_linux.py dist/choroy_reader_0.1.0_amd64.deb
+.venv/bin/python packaging/verify_linux.py dist/choroy_reader_0.1.1_amd64.deb
 ```
 
-El resultado esperado es `dist/choroy_reader_0.1.0_amd64.deb` (o `arm64`).
+El resultado esperado es `dist/choroy_reader_0.1.1_amd64.deb` (o `arm64`).
 Incluye acceso en el menú de aplicaciones y un ejecutable con Python y Qt.
 La versión se toma de `assets/app_info.json`; el constructor rechaza versiones
 distintas, recursos incompletos o datos personales dentro del ejecutable.
@@ -73,11 +73,11 @@ También genera un archivo `.deb.sha256` junto al paquete. Para comprobarlo:
 
 ```bash
 cd dist
-sha256sum -c choroy_reader_0.1.0_amd64.deb.sha256
+sha256sum -c choroy_reader_0.1.1_amd64.deb.sha256
 ```
 
 Para instalar o actualizar, cierra la aplicación y ejecuta desde la carpeta del
-paquete `sudo apt install ./choroy_reader_0.1.0_amd64.deb`. Para una nueva versión,
+paquete `sudo apt install ./choroy_reader_0.1.1_amd64.deb`. Para una nueva versión,
 actualiza `assets/app_info.json` y repite la compilación con un número superior.
 El programa se instala en `/opt/choroy_reader`; las preferencias y la biblioteca
 se conservan en `~/.config/noticias` o `~/.config/choroy_reader`. Las actualizaciones
@@ -190,3 +190,15 @@ En el generador de citas, **Mostrar idioma original** alterna con la traducción
 Si creaste la cita desde el artículo traducido, primero permite seleccionar
 el pasaje correspondiente del original. Después puedes alternar entre ambas
 versiones sin perder la selección ni reconstruir el original mediante traducción.
+
+### Actualizaciones del programa
+
+En **Configuración → Acerca de Choroy Reader → Actualizaciones**, pulsa
+**Buscar actualizaciones**. La consulta manual a GitHub incluye publicaciones beta
+con etiquetas numéricas como `v0.1.1`. Si hay una versión superior, muestra sus
+novedades y **Descargar nueva versión** abre la publicación para elegir el instalador.
+La consulta requiere conexión y no instala nada automáticamente. Cierra la aplicación
+antes de instalar el nuevo paquete; tu biblioteca y preferencias se conservan.
+
+La versión 0.1.1 incorpora esta función. Quienes tengan 0.1.0 deben descargar e
+instalar 0.1.1 manualmente para poder consultar las siguientes actualizaciones.

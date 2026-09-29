@@ -476,23 +476,29 @@ class Service:
         self.content[link] = article
         return article
 
-    def translate(self, text):
+    def translate(self, text, cancel=None):
         chunks = []
         for paragraph in text.split('\n\n'):
             for part in textwrap.wrap(paragraph, width=1200, break_long_words=False, break_on_hyphens=False):
+                if cancel and cancel.is_set():
+                    raise ValueError("Traducción cancelada")
                 result = core.translate_text(part)
+                if cancel and cancel.is_set():
+                    raise ValueError("Traducción cancelada")
                 if not result:
                     raise ValueError('No se pudo traducir. Puedes reintentar.')
                 chunks.append(result)
         return '\n\n'.join(chunks)
 
-    def translate_article(self, article):
+    def translate_article(self, article, cancel=None):
         original = article['cuerpo']
         self.reader_store.save_original(article['link'], original)
         snapshot = self.reader_store.read(article['link'])
         if snapshot and snapshot['translation']:
             return snapshot['translation']
-        translated = original if article.get('idioma_original') == 'es' else self.translate(original)
+        translated = original if article.get('idioma_original') == 'es' else (self.translate(original, cancel=cancel) if cancel is not None else self.translate(original))
+        if cancel and cancel.is_set():
+            raise ValueError("Traducción cancelada")
         self.reader_store.save_translation(article['link'], original, translated)
         return translated
 

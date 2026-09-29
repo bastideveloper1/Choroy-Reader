@@ -13,6 +13,18 @@ ApplicationWindow {
     title: "Choroy Reader"
     property var s: backend.state
     property var p: s.palette
+    palette.window: p.panel
+    palette.windowText: p.text
+    palette.text: p.text
+    palette.buttonText: p.text
+    palette.button: p.card
+    palette.base: p.panel
+    palette.alternateBase: p.hover
+    palette.highlight: p.accent
+    palette.highlightedText: p.accent_text
+    palette.mid: p.border
+    palette.dark: p.border
+    palette.light: p.hover
     property real feed_scroll: 0
     property bool sidebar_visible: true
     property bool reading_mode: false
@@ -38,6 +50,20 @@ ApplicationWindow {
         sequence: "Escape"; context: Qt.WindowShortcut
         enabled: window.reading_mode && !image_viewer.visible && !quote_dialog.visible && !note_editor.visible
         onActivated: window.leave_reading_mode()
+    }
+    function go_back() {
+        if (note_editor.visible) {
+            if (note_editor.save()) note_editor.close();
+            return;
+        }
+        backend.go_back();
+    }
+    Shortcut { sequences: [StandardKey.Back]; onActivated: window.go_back() }
+    MouseArea {
+        objectName: "mouseBackNavigation"
+        anchors.fill: parent; z: 1000
+        acceptedButtons: Qt.BackButton
+        onClicked: window.go_back()
     }
     property bool settings_open: false
     property var expanded_categories: ({})
@@ -595,8 +621,9 @@ ApplicationWindow {
                 delegate: Rectangle {
                     objectName: "feedCard"
                     id: card; required property var modelData
-                    width: feed_scroll_view.cellWidth - 8; height: feed_scroll_view.cellHeight - 8; color: p.card; radius: 2
-                    border.color: card_hover.hovered ? p.accent : p.border; border.width: 1
+                    width: feed_scroll_view.cellWidth - 8; height: feed_scroll_view.cellHeight - 8; color: card_hover.hovered ? (p.light ? "#dfe2e5" : "#292e35") : p.card; radius: 2
+                    border.color: p.border; border.width: 1
+                    Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                     Rectangle {
                         anchors.fill: parent; radius: parent.radius; z: 1
                         visible: card.modelData.dismissed || card.modelData.seen
@@ -688,7 +715,7 @@ ApplicationWindow {
                         IconAction { kind: "archive"; stateActive: !!s.reader.archived; hint: s.reader.archived ? "Quitar de Archivados" : "Archivar artículo"; onClicked: backend.toggle_archived(s.reader.link) }
                         IconAction { kind: "save"; filled: !!s.reader.saved; hint: filled ? "Quitar guardado" : "Guardar"; onClicked: backend.toggle_saved(s.reader.link) }
                         IconAction { objectName: "readerDownload"; kind: s.reader.downloaded ? "delete" : "download"; filled: !!s.reader.downloaded; enabled: !s.reader.downloading; hint: filled ? "Eliminar descarga" : "Descargar"; onClicked: backend.toggle_download(s.reader.link) }
-                        Action { objectName: "readerTranslate"; compact: true; text: s.reader.translating ? "Traduciendo…" : s.reader.translated ? "Ver original" : "Leer en español"; active: true; enabled: s.reader.ready && !s.reader.translating; onClicked: backend.translate_article() }
+                        Action { objectName: "readerTranslate"; compact: true; text: s.reader.translating ? "Cancelar traducción" : s.reader.translated ? "Ver original" : "Leer en español"; active: true; enabled: s.reader.ready; onClicked: s.reader.translating ? backend.cancel_translation() : backend.translate_article() }
                     Action {
                         text: "Aa"; compact: true; objectName: "readerFontButton"
                         ToolTip.visible: hovered; ToolTip.text: "Tamaño de letra"
@@ -929,6 +956,15 @@ ApplicationWindow {
                     Action { text: "Repositorio ↗"; active: true; onClicked: backend.open_url(s.about.repository) }
                     Action { text: "Reportar un error ↗"; active: true; onClicked: backend.open_url(s.about.issues) }
                 }
+                SectionTitle { text: "Actualizaciones"; Layout.leftMargin: 18 }
+                Label { objectName: "updateStatus"; text: s.updates.message; textFormat: Text.PlainText; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Flow {
+                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 6
+                    Action { objectName: "checkUpdates"; text: s.updates.busy ? "Buscando…" : "Buscar actualizaciones"; enabled: !s.updates.busy; onClicked: backend.check_updates() }
+                    Action { text: "Descargar nueva versión ↗"; visible: s.updates.available; onClicked: backend.open_url(s.updates.url) }
+                }
+                Label { visible: s.updates.available; text: "Descarga el instalador desde la publicación. Cierra Choroy Reader e instala el nuevo paquete para actualizar conservando tu biblioteca."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { visible: s.updates.available && s.updates.notes.length > 0; text: s.updates.notes; textFormat: Text.PlainText; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
                 SectionTitle { text: "Créditos"; Layout.leftMargin: 18 }
                 Repeater {
                     model: s.about.credits
@@ -1418,25 +1454,18 @@ ApplicationWindow {
         hostWindow: window; markerColors: s.marker_colors
         readerIdentity: (s.reader.link || "") + (s.reader.translated ? "|es" : "|original")
     }
-    FileDialog { id: category_icon_file; title: "Icono de la categoría"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp *.svg *.ico)"]; onAccepted: category_dialog.icon_url = selectedFile.toString() }
-    FileDialog { id: icon_file; title: "Icono de la fuente"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp)"]; onAccepted: source_dialog.icon_url=selectedFile.toString() }
+    FileDialog { options: FileDialog.DontUseNativeDialog; id: category_icon_file; title: "Icono de la categoría"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp *.svg *.ico)"]; onAccepted: category_dialog.icon_url = selectedFile.toString() }
+    FileDialog { options: FileDialog.DontUseNativeDialog; id: icon_file; title: "Icono de la fuente"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp)"]; onAccepted: source_dialog.icon_url=selectedFile.toString() }
 
     Dialog {
         id: quote_dialog; objectName: "quote_dialog"; anchors.centerIn: parent; modal: true; title: "Preparar imagen de la cita"; width: Math.min(820,window.width-30); height: Math.min(580,window.height-30)
-        palette.windowText: "#252525"
-        palette.text: "#252525"
-        palette.buttonText: "#252525"
-        palette.button: "#cccccc"
-        palette.base: "#ffffff"
-        palette.highlight: "#62834b"
-        palette.highlightedText: "#ffffff"
         property int background_index: 0
         property var backgrounds: [{key: "", name: "Según el tema", start: "#171b20", end: "#171b20"}].concat(s.quote_backgrounds || [])
         property bool spanish: false; property bool title_spanish: false; property bool include_image: false; property int color_index: 0
         function regenerate() {quote_delay.restart();}
         onOpened: {background_index=0;spanish=s.quote_is_translated;title_spanish=s.quote_title_has_translation && spanish;include_image=false;color_index=Math.max(0,s.themes.findIndex(t=>t.key===s.theme));regenerate();}
-        background: Rectangle { color: "#dedede"; radius: 12; border.color: "#b4b4b4" }
-        header: Label { text: quote_dialog.title; padding: 18; color: "#252525"; font.bold: true; font.pixelSize: 17 }
+        background: Rectangle { color: p.panel; radius: 12; border.color: p.border }
+        header: Label { text: quote_dialog.title; padding: 18; color: p.text; font.bold: true; font.pixelSize: 17 }
         contentItem: RowLayout {
             spacing: 18
             ColumnLayout { Layout.preferredWidth: 210; Layout.alignment: Qt.AlignTop; spacing: 14
@@ -1444,21 +1473,21 @@ ApplicationWindow {
                     if (quote_dialog.spanish && !s.quote_has_original) quote_original_dialog.open();
                     else { quote_dialog.spanish = !quote_dialog.spanish; quote_dialog.regenerate(); }
                 }
-                    background: Rectangle { color: parent.hovered?"#c2c2c2":"#cccccc"; radius:6 } contentItem: Text { text:parent.text;color:"#252525";padding:10;wrapMode:Text.Wrap } Layout.fillWidth:true
+                    background: Rectangle { color: parent.hovered?p.hover:p.card; radius:6 } contentItem: Text { text:parent.text;color:p.text;padding:10;wrapMode:Text.Wrap } Layout.fillWidth:true
                 }
                 CheckBox {
                     id: quote_title_language; text: "Título en español"
                     Layout.fillWidth: true; spacing: 8; enabled: s.quote_title_has_translation; checked: quote_dialog.title_spanish
                     onClicked: { quote_dialog.title_spanish=checked; quote_dialog.regenerate(); }
                     contentItem: Text {
-                        text: quote_title_language.text; color: quote_title_language.enabled ? "#252525" : "#686868"
+                        text: quote_title_language.text; color: quote_title_language.enabled ? p.text : p.muted
                         leftPadding: quote_title_language.indicator.width + quote_title_language.spacing
                         wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter
                     }
                     indicator: Rectangle {
                         width: 20; height: 20; y: (quote_title_language.height-height)/2; radius: 4
-                        color: quote_title_language.checked ? "#62834b" : "#eeeeee"; border.color: "#686868"
-                        Text { anchors.centerIn: parent; text: quote_title_language.checked ? "✓" : ""; color: "#ffffff" }
+                        color: quote_title_language.checked ? p.accent : p.card; border.color: p.muted
+                        Text { anchors.centerIn: parent; text: quote_title_language.checked ? "✓" : ""; color: p.accent_text }
                     }
                 }
                 CheckBox {
@@ -1467,17 +1496,17 @@ ApplicationWindow {
                     enabled: s.quote_has_image; checked: quote_dialog.include_image
                     onClicked: {quote_dialog.include_image=checked;quote_dialog.regenerate();}
                     contentItem: Text {
-                        text: quote_image_check.text; color: quote_image_check.enabled ? "#252525" : "#686868"
+                        text: quote_image_check.text; color: quote_image_check.enabled ? p.text : p.muted
                         leftPadding: quote_image_check.indicator.width + quote_image_check.spacing
                         wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter
                     }
                     indicator: Rectangle {
                         width: 20; height: 20; y: (quote_image_check.height-height)/2; radius: 4
-                        color: quote_image_check.checked ? "#62834b" : "#eeeeee"; border.color: "#686868"
-                        Text { anchors.centerIn: parent; text: quote_image_check.checked ? "✓" : ""; color: "#ffffff" }
+                        color: quote_image_check.checked ? p.accent : p.card; border.color: p.muted
+                        Text { anchors.centerIn: parent; text: quote_image_check.checked ? "✓" : ""; color: p.accent_text }
                     }
                 }
-                Label { text: "Fondo de la cita"; color: "#252525" }
+                Label { text: "Fondo de la cita"; color: p.text }
                 ComboBox {
                     objectName: "quoteBackgroundSelector"
                     Layout.fillWidth: true; model: quote_dialog.backgrounds; textRole: "name"
@@ -1497,17 +1526,17 @@ ApplicationWindow {
                     background:Rectangle { color:s.themes[quote_dialog.color_index].key==="periodico"?"#e6e6e6":"#232a34";radius:6 }
                     contentItem:Text {text:parent.text;color:s.themes[quote_dialog.color_index].color;wrapMode:Text.Wrap;padding:10}
                 }
-                Label { text:s.quote_busy?"Actualizando vista previa…":s.quote_is_translated && !s.quote_has_original?"Mostrar idioma original permite seleccionar las palabras exactas de la fuente.":"Vista previa · 2160 × 2160 · PNG o JPG"; color:"#555555"; wrapMode:Text.Wrap; Layout.fillWidth:true }
+                Label { text:s.quote_busy?"Actualizando vista previa…":s.quote_is_translated && !s.quote_has_original?"Mostrar idioma original permite seleccionar las palabras exactas de la fuente.":"Vista previa · 2160 × 2160 · PNG o JPG"; color:p.muted; wrapMode:Text.Wrap; Layout.fillWidth:true }
             }
             Image { source:s.quote_preview; Layout.fillWidth:true; Layout.fillHeight:true; fillMode:Image.PreserveAspectFit; smooth:true; mipmap:true; cache:false }
         }
         footer: RowLayout { Item {Layout.fillWidth:true} Button {text:"Cancelar";onClicked:quote_dialog.close()} Button {text:"Guardar imagen…";enabled:s.quote_can_save;onClicked:quote_file.open()} Item {width:12} }
         Timer { id:quote_delay;interval:150;onTriggered:backend.update_quote(quote_dialog.spanish,quote_dialog.include_image,quote_dialog.title_spanish,s.themes[quote_dialog.color_index].key,quote_dialog.backgrounds[quote_dialog.background_index].key) }
     }
-    FileDialog { id: opml_import_file; title: "Importar fuentes y categorías"; nameFilters: ["Fuentes OPML (*.opml *.xml)"]; onAccepted: backend.portability_action("import_opml", selectedFile.toString()) }
-    FileDialog { id: opml_export_file; title: "Exportar fuentes y categorías"; fileMode: FileDialog.SaveFile; defaultSuffix: "opml"; nameFilters: ["Fuentes OPML (*.opml)"]; onAccepted: backend.portability_action("export_opml", selectedFile.toString()) }
-    FileDialog { id: backup_export_file; title: "Crear copia de seguridad local"; fileMode: FileDialog.SaveFile; defaultSuffix: "zip"; nameFilters: ["Copia de Choroy Reader (*.zip)"]; onAccepted: backend.portability_action("backup", selectedFile.toString()) }
-    FileDialog { id: backup_import_file; title: "Restaurar copia de seguridad"; nameFilters: ["Copia de Choroy Reader (*.zip)"]; onAccepted: { restore_confirmation.backup_url = selectedFile.toString(); restore_confirmation.open(); } }
+    FileDialog { options: FileDialog.DontUseNativeDialog; id: opml_import_file; title: "Importar fuentes y categorías"; nameFilters: ["Fuentes OPML (*.opml *.xml)"]; onAccepted: backend.portability_action("import_opml", selectedFile.toString()) }
+    FileDialog { options: FileDialog.DontUseNativeDialog; id: opml_export_file; title: "Exportar fuentes y categorías"; fileMode: FileDialog.SaveFile; defaultSuffix: "opml"; nameFilters: ["Fuentes OPML (*.opml)"]; onAccepted: backend.portability_action("export_opml", selectedFile.toString()) }
+    FileDialog { options: FileDialog.DontUseNativeDialog; id: backup_export_file; title: "Crear copia de seguridad local"; fileMode: FileDialog.SaveFile; defaultSuffix: "zip"; nameFilters: ["Copia de Choroy Reader (*.zip)"]; onAccepted: backend.portability_action("backup", selectedFile.toString()) }
+    FileDialog { options: FileDialog.DontUseNativeDialog; id: backup_import_file; title: "Restaurar copia de seguridad"; nameFilters: ["Copia de Choroy Reader (*.zip)"]; onAccepted: { restore_confirmation.backup_url = selectedFile.toString(); restore_confirmation.open(); } }
     Dialog {
         id: restore_confirmation; anchors.centerIn: parent; modal: true; width: Math.min(480, window.width - 40)
         property string backup_url: ""
@@ -1548,7 +1577,7 @@ ApplicationWindow {
             }
         }
     }
-    FileDialog { id:quote_file;title:"Guardar cita";fileMode:FileDialog.SaveFile;currentFolder:s.downloads_folder;nameFilters:["Imagen PNG (*.png)","Imagen JPG (*.jpg *.jpeg)"];defaultSuffix:selectedNameFilter.index===1?"jpg":"png";onAccepted:backend.export_quote(selectedFile.toString()) }
+    FileDialog { options: FileDialog.DontUseNativeDialog; id:quote_file;title:"Guardar cita";fileMode:FileDialog.SaveFile;currentFolder:s.downloads_folder;nameFilters:["Imagen PNG (*.png)","Imagen JPG (*.jpg *.jpeg)"];defaultSuffix:selectedNameFilter.index===1?"jpg":"png";onAccepted:backend.export_quote(selectedFile.toString()) }
     Dialog { id:error_dialog;anchors.centerIn:parent;modal:true;title:"Choroy Reader";standardButtons:Dialog.Ok;width:Math.min(480,window.width-40)
         property string message:""
         Label {text:error_dialog.message;wrapMode:Text.Wrap;width:parent.width;color:p.text}

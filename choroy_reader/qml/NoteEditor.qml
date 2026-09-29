@@ -248,7 +248,7 @@ Dialog {
     Timer { id: navigation_timer; interval: 0; onTriggered: if (editor.visible && editor.readerIdentity !== editor.ownerIdentity) editor.finish() }
     Timer { id: save_timer; interval: 450; onTriggered: editor.save() }
     Timer { id: image_layout_timer; interval: 0; onTriggered: if (editor.visible) editor.imageEntries = backend.note_image_layout(note_text.textDocument) }
-    FileDialog {
+    FileDialog { options: FileDialog.DontUseNativeDialog;
         id: note_image_file; title: "Insertar imagen en la nota"
         nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp *.gif *.bmp)"]
         onAccepted: { const source = backend.import_note_image(selectedFile.toString()); if (source) editor.insert_image(source); }
