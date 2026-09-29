@@ -116,3 +116,23 @@ Los iconos sociales del autor son marcadores visuales sin enlaces por ahora.
 
 Consulta [la revisión de arquitectura](docs/architecture.md) para las decisiones
 de persistencia, nombres, compatibilidad y las tareas pendientes antes de publicar.
+
+### Preferencias de lectura
+
+En un artículo, el botón **Aa** permite elegir letra pequeña, mediana, grande o muy grande. En **Configuración → Diseño** puedes guardar el tamaño predeterminado y activar o desactivar las imágenes de los artículos (portada e imágenes intermedias). Las imágenes recuperadas se conservan para las descargas sin conexión.
+
+Al iniciar con un feed guardado, Choroy Reader muestra la copia local. Usa **Actualizar feed** para buscar novedades; las portadas y traducciones ya disponibles se reutilizan. Si aún no hay un feed guardado, la primera carga se inicia automáticamente.
+
+Las imágenes del cuerpo conservan sus proporciones y se colocan junto al texto cuando hay espacio suficiente. Haz clic en una imagen para abrir el visor: permite ampliar, reducir, ajustar a la ventana y desplazarse; se cierra con **Escape** o **Cerrar**.
+
+El botón **Modo lectura** del artículo activa la pantalla completa y oculta la navegación y las acciones secundarias. Usa **Salir del modo lectura** (arriba) o **Escape** para volver a la vista anterior.
+
+**Guardados** muestra primero los artículos añadidos más recientemente, incluso con el radar activo. Los artículos guardados o archivados se ocultan del feed principal y siguen disponibles en sus respectivas listas. Al quitar ambos estados, vuelven a mostrarse si siguen en el feed y dentro del período seleccionado.
+
+### Fuentes sin RSS
+
+Añade la dirección del blog o de su sección de noticias y deja vacía la URL RSS. Si no se detecta un feed, **Actualizar feed** intentará extraer las publicaciones del HTML y sus datos estructurados. Las tarjetas y el lector mostrarán **WEB · Publicación extraída**. Cuando no exista una fecha publicada, se indicará la fecha de detección, que se conserva en actualizaciones posteriores.
+
+Esta extracción no ejecuta JavaScript ni accede a contenido que requiera iniciar sesión. Algunos sitios no exponen sus publicaciones en el HTML y pueden no ser compatibles. Si una extracción posterior no encuentra publicaciones, se conserva la última copia local.
+
+El generador de imágenes de citas ofrece fondos lisos y degradados en **Fondo de la cita**, con colores de texto adaptados al fondo. La vista previa y la exportación PNG/JPG conservan el diseño elegido.

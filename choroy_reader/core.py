@@ -13,7 +13,7 @@ from html.parser import HTMLParser
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageColor
 
 
 class HtmlContent(HTMLParser):
@@ -79,6 +79,33 @@ def article_text(html):
         return "\n\n".join(b for b in blocks if b)
     except ImportError:
         return ""
+
+def article_images(html, link, text):
+    """Locate editorial images against the stable plain-text paragraphs."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, 'html.parser')
+    for node in soup.select('script, style, noscript, nav, header, footer, aside, form'):
+        node.decompose()
+    body = soup.select_one('[itemprop="articleBody"]') or soup.find('article') or soup.find('main') or soup
+    paragraphs = text.split('\n\n')
+    result, seen, paragraph = [], set(), 0
+    for node in body.find_all(['p', 'h2', 'h3', 'li', 'blockquote', 'img']):
+        if node.name != 'img':
+            value = node.get_text(' ', strip=True)
+            if value in paragraphs[paragraph:]:
+                paragraph = paragraphs.index(value, paragraph)
+            continue
+        srcset = node.get('data-srcset') or node.get('srcset', '')
+        responsive = srcset.split(',')[-1].strip().split(' ')[0]
+        src = node.get('data-src') or node.get('data-original') or responsive or node.get('src')
+        url = urllib.parse.urljoin(link, src or '')
+        if urllib.parse.urlparse(url).scheme not in {'http', 'https'} or url in seen:
+            continue
+        if node.get('width') == '1' or node.get('height') == '1':
+            continue
+        seen.add(url)
+        result.append(dict(url=url, paragraph=paragraph, alt=node.get('alt', '')))
+    return result
 
 ARTICLES_PER_SOURCE = 3
 
@@ -565,11 +592,44 @@ def relative_date(date):
         return f"Hace {seconds // 86400} días"
     return date.strftime("%d %b %Y")
 
-def create_quote_image(excerpt, source, link, translated=False, title="", color="#b9a0ff", image_bytes=None, original_language="", theme="gris") :
+QUOTE_BACKGROUNDS = [
+    dict(key="marfil", name="Marfil", start="#fff7e8", end="#fff7e8", light=True),
+    dict(key="salvia", name="Salvia", start="#e0ecdf", end="#e0ecdf", light=True),
+    dict(key="lavanda", name="Lavanda", start="#eee5f6", end="#eee5f6", light=True),
+    dict(key="arena", name="Arena", start="#ead9be", end="#ead9be", light=True),
+    dict(key="oceano", name="Océano", start="#102c46", end="#102c46", light=False),
+    dict(key="bosque", name="Bosque", start="#163b31", end="#163b31", light=False),
+    dict(key="vino", name="Vino", start="#421e35", end="#421e35", light=False),
+    dict(key="grad_aurora", name="Degradado · Aurora", start="#24254f", end="#10554d", light=False),
+    dict(key="grad_atardecer", name="Degradado · Atardecer", start="#54243e", end="#773d2c", light=False),
+    dict(key="grad_noche", name="Degradado · Noche", start="#111e37", end="#442754", light=False),
+    dict(key="grad_mar", name="Degradado · Mar", start="#103954", end="#176164", light=False),
+    dict(key="grad_amanecer", name="Degradado · Amanecer", start="#ffe3ca", end="#efd8ed", light=True),
+    dict(key="grad_brisa", name="Degradado · Brisa", start="#d9eee5", end="#dce7fa", light=True),
+]
+
+
+def quote_background(size, preset):
+    """Render a smooth gradient at export resolution with a small row buffer."""
+    start, end = ImageColor.getrgb(preset['start']), ImageColor.getrgb(preset['end'])
+    strip = Image.new('RGB', (1, size[1]))
+    strip.putdata([tuple(round(a + (b-a) * y / max(1, size[1]-1)) for a, b in zip(start, end))
+                   for y in range(size[1])])
+    return strip.resize(size)
+
+
+def create_quote_image(excerpt, source, link, translated=False, title="", color="#b9a0ff", image_bytes=None, original_language="", theme="gris", background="") :
     """Genera una cita cuadrada de alta resolución para publicar."""
     light = theme == "periodico"
     scale = 2  # 2160 px conserva nitidez tras la compresión de redes sociales.
     image = Image.new("RGB", (1080 * scale, 1080 * scale), "#e6e6e6" if light else "#171b20")
+    preset = next((item for item in QUOTE_BACKGROUNDS if item['key'] == background), None)
+    if preset:
+        image = quote_background(image.size, preset)
+        light = preset['light']
+        color = "#33354a" if light else "#fff0d2"
+    muted = "#525b67" if light else "#c0ccd8"
+    border = "#89929b" if light else "#9cabb8"
     drawing = ImageDraw.Draw(image)
     path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     def font_size(size):
@@ -608,18 +668,18 @@ def create_quote_image(excerpt, source, link, translated=False, title="", color=
         lines = wrap_text(excerpt, font, text_width)
         if len(lines) * ((size + 14) * scale) <= spacing and all(drawing.textlength(l, font=font) <= text_width for l in lines):
             break
-    drawing.rounded_rectangle((48 * scale, 48 * scale, 1032 * scale, 1032 * scale), radius=28 * scale, outline="#394453", width=2 * scale)
+    drawing.rounded_rectangle((48 * scale, 48 * scale, 1032 * scale, 1032 * scale), radius=28 * scale, outline=border, width=2 * scale)
     drawing.rectangle((94 * scale, 108 * scale, 150 * scale, 114 * scale), fill=color)
     drawing.text((94 * scale, 145 * scale), "CITA EXTRAÍDA DEL ARTÍCULO", font=font_size(20), fill=color)
     drawing.multiline_text((94 * scale, 205 * scale), "\n".join(title_lines), font=title_font, fill=color, spacing=10 * scale)
-    drawing.line((94 * scale, title_divider, 986 * scale, title_divider), fill="#adadad" if light else "#515b6a", width=2 * scale)
+    drawing.line((94 * scale, title_divider, 986 * scale, title_divider), fill=border, width=2 * scale)
     drawing.multiline_text((94 * scale, quote_y), "\n".join(lines), font=font, fill="#202020" if light else "#edf1f7", spacing=14 * scale)
-    drawing.line((94 * scale, 920 * scale, 986 * scale, 920 * scale), fill="#394453", width=2 * scale)
+    drawing.line((94 * scale, 920 * scale, 986 * scale, 920 * scale), fill=border, width=2 * scale)
     language = {"en": "inglés", "es": "español"}.get(original_language)
     origin = "Versión original en " + language if language else "Versión original"
     attribution = source[:45] + " · " + origin
     drawing.text((94 * scale, 944 * scale), attribution, font=font_size(18), fill="#202020" if light else "#dbe1e9")
-    drawing.text((94 * scale, 978 * scale), urllib.parse.urlparse(link).netloc[:75], font=font_size(17), fill="#8793a3")
+    drawing.text((94 * scale, 978 * scale), urllib.parse.urlparse(link).netloc[:75], font=font_size(17), fill=muted)
 
     # Sello discreto: se incorpora al archivo final, no solo a la vista previa.
     seal_font = font_size(15)
@@ -635,6 +695,6 @@ def create_quote_image(excerpt, source, link, translated=False, title="", color=
             image.paste(logo, (seal_x, seal_y), logo)
     except (OSError, ValueError):
         pass
-    drawing.text((seal_x + seal_size + 10 * scale, seal_y + 6 * scale), seal_text, font=seal_font, fill="#525b67" if light else "#9da9b8")
+    drawing.text((seal_x + seal_size + 10 * scale, seal_y + 6 * scale), seal_text, font=seal_font, fill=muted)
     image.info["articulo"] = link
     return image

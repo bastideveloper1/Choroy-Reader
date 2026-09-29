@@ -10,6 +10,62 @@ from choroy_reader.service import Service
 
 
 class LibraryTests(unittest.TestCase):
+    def test_saved_order_uses_addition_time_even_with_radar_and_updates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = Service(tmp)
+            service.config.update(radar_activo=True, radar_palabras=['seguridad'])
+            older_save = dict(link='https://example.com/first', titulo='Seguridad', fecha=datetime.now(timezone.utc))
+            newer_save = dict(link='https://example.com/second', titulo='Otra noticia', fecha=datetime(2000, 1, 1, tzinfo=timezone.utc))
+            with patch('choroy_reader.library.time.time_ns', return_value=100):
+                service.library.save('guardados', older_save)
+            with patch('choroy_reader.library.time.time_ns', return_value=200):
+                service.library.save('guardados', newer_save)
+            with patch('choroy_reader.library.time.time_ns', return_value=300):
+                service.library.save('guardados', dict(older_save, cuerpo='Contenido actualizado'))
+            self.assertEqual([a['link'] for a in service.filtered('guardados')], [newer_save['link'], older_save['link']])
+            service.save_config()
+            restored = Service(tmp)
+            self.assertEqual([a['link'] for a in restored.filtered('guardados')], [newer_save['link'], older_save['link']])
+            self.assertEqual(restored.filtered('guardados', query='Seguridad')[0]['guardado_en'], 100)
+            restored.library.delete('guardados', older_save['link'])
+            with patch('choroy_reader.library.time.time_ns', return_value=400):
+                restored.library.save('guardados', older_save)
+            self.assertEqual(restored.filtered('guardados')[0]['link'], older_save['link'])
+
+    def test_legacy_saved_date_survives_content_update(self):
+        import json
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            library = Library(tmp)
+            article = dict(link='https://example.com/legacy', titulo='Anterior')
+            path = library.path('guardados', article['link'])
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(article))
+            os.utime(path, ns=(123456789, 123456789))
+            library.save('guardados', dict(article, titulo='Actualizado'))
+            self.assertEqual(library.read('guardados', article['link'])['guardado_en'], 123456789)
+
+    def test_refresh_reuses_cover_and_translated_title(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = Service(tmp)
+            source = dict(nombre='Fuente', url='https://example.com', url_feed='https://example.com/rss')
+            article = dict(link='https://example.com/a', titulo='A title', titulo_es='Un título', traducir_es=True, imagen=b'cached', fecha=datetime.now(timezone.utc))
+            service.articles[source['url']] = [article]
+            with patch.object(service, 'fetch_favicon'), patch.object(core, 'get_articles', return_value=[(article['titulo'], article['link'], None, article['fecha'].isoformat())]), patch.object(core, 'translate_text') as translate, patch.object(service, 'fetch_image') as image:
+                _, articles = service.fetch_source(source, service.config)
+                self.assertEqual(articles[0]['imagen'], b'cached')
+                self.assertEqual(articles[0]['titulo_es'], 'Un título')
+                translate.assert_not_called()
+                image.assert_not_called()
+
+    def test_cover_cache_does_not_decode_images_on_ui_thread(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = Service(tmp)
+            with patch('choroy_reader.service.Image.open', side_effect=AssertionError('Synchronous decode')):
+                first = service.image_url(b'cover bytes')
+                self.assertEqual(service.image_url(b'cover bytes'), first)
+            self.assertEqual(len(list((Path(tmp) / 'cache' / 'images').iterdir())), 1)
+
     def test_history_retention_protection_recovery_and_identity(self):
         import time
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,6 +224,23 @@ class ServiceTests(unittest.TestCase):
         articles=core.parse_feed(rss)
         self.assertEqual(articles[0][2],'/cover.jpg')
         self.assertIn('Contenido',core.feed_content['https://example.com/a'])
+
+    def test_quote_backgrounds_render_solid_and_gradient_colors(self):
+        from PIL import ImageColor
+        for key in ('marfil', 'grad_aurora', 'grad_amanecer'):
+            preset = next(item for item in core.QUOTE_BACKGROUNDS if item['key'] == key)
+            image = core.create_quote_image('Una cita de prueba.', 'Fuente', 'https://example.com/article', title='Título', background=key)
+            self.assertEqual(image.size, (2160, 2160))
+            self.assertEqual(image.getpixel((0, 0)), ImageColor.getrgb(preset['start']))
+            self.assertEqual(image.getpixel((0, 2159)), ImageColor.getrgb(preset['end']))
+            if preset['start'] != preset['end']:
+                self.assertNotEqual(image.getpixel((0, 1080)), image.getpixel((0, 0)))
+            output = io.BytesIO()
+            image.save(output, 'PNG')
+            from PIL import Image
+            output.seek(0)
+            with Image.open(output) as reopened:
+                self.assertEqual(reopened.getpixel((0, 2159)), ImageColor.getrgb(preset['end']))
 
     def test_quote_export_and_word_wrapping(self):
         from PIL import Image, ImageDraw

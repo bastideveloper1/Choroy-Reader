@@ -20,6 +20,9 @@ ROOT=Path(__file__).resolve().parent.parent
 
 class QtTests(unittest.TestCase):
     def setUp(self):
+        network = patch('choroy_reader.core.download', side_effect=OSError('Offline test'))
+        network.start()
+        self.addCleanup(network.stop)
         self.tmp=tempfile.TemporaryDirectory()
         self.service=Service(self.tmp.name)
         self.service.config['categorias']=[{'nombre':'Tech','sitios':[{'nombre':'Fuente','url':'https://example.com'}]}]
@@ -46,6 +49,234 @@ class QtTests(unittest.TestCase):
                 if found is not None:
                     return found
         return find(root.contentItem() if isinstance(root, QQuickWindow) else root)
+
+    def test_large_feed_virtualizes_cards_and_preserves_them_on_progress(self):
+        self.service.articles['https://example.com'] = [dict(self.article, link=f'https://example.com/{i}') for i in range(2000)]
+        self.backend.publish()
+        root = self.load_qml()
+        grid = root.findChild(QQuickItem, 'feedGrid')
+        self.assertEqual(grid.property('count'), 2000)
+        def live_cards():
+            return [item for item in grid.property('contentItem').childItems() if item.objectName() == 'feedCard']
+        cards = live_cards()
+        self.assertGreater(len(cards), 0)
+        self.assertLess(len(cards), 40)
+        from PySide6.QtTest import QSignalSpy
+        reset = QSignalSpy(self.backend.article_model.modelReset)
+        with patch.object(self.backend, 'article_view', side_effect=AssertionError('Progress rebuilt articles')):
+            self.backend._progress('Cargando fuentes: 1/20')
+            APP.processEvents()
+        self.assertEqual(reset.count(), 0)
+        self.assertEqual(live_cards(), cards)
+        link = self.backend.article_model.items[0]['link']
+        self.backend.toggle_saved(link)
+        self.assertNotIn(link, [item['link'] for item in self.backend.article_model.items])
+        self.assertEqual(self.backend.article_model.rowCount(), 1999)
+        self.assertEqual(reset.count(), 1)
+        grid.setProperty('contentY', 4600)
+        QTest.qWait(100)
+        self.assertLess(len(live_cards()), 40)
+
+    def test_startup_reuses_feed_without_refresh_or_storage_scan(self):
+        with patch.object(self.service, 'storage_report', side_effect=AssertionError('Storage scan on startup')):
+            backend = Backend(self.service, ROOT / 'assets')
+        with patch.object(backend, 'background') as background, patch.object(backend, 'refresh') as refresh:
+            backend.startup()
+            background.call_args.args[1](None, None)
+            refresh.assert_not_called()
+            self.service.articles = {}
+            backend.startup()
+            background.call_args.args[1](None, None)
+            refresh.assert_called_once()
+        backend.deleteLater()
+
+    def test_inline_images_follow_reflow_and_last_image_is_scrollable(self):
+        paragraphs = [
+            'Texto con emoji 😀 y palabras que cambian de línea. ' * 12,
+            'Otro párrafo mucho más largo para comprobar las imágenes intermedias. ' * 25,
+            'Último párrafo. ' * 5,
+        ]
+        self.article['cuerpo'] = '\n\n'.join(paragraphs)
+        source = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8//8/AwMDEwMDAwMDAwAkBgMB/DXemwAAAABJRU5ErkJggg=='
+        self.article['imagenes_cuerpo'] = [dict(paragraph=i, source=source) for i in (0, 1, 1, 2)]
+        self.backend.reader = self.article
+        self.backend.reader_body = self.article['cuerpo']
+        self.backend.publish()
+        root = self.load_qml()
+        editor = root.findChild(QQuickItem, 'article_text')
+        reader = root.findChild(QQuickItem, 'reader_page')
+        self.backend.mark(0, 8, '#ffe88f')
+
+        def images():
+            return [item for item in editor.childItems() if item.objectName() == 'inlineArticleImage']
+
+        def check_layout():
+            entries = self.backend.inline_images()
+            visible_images = images()
+            self.assertEqual(len(visible_images), len(entries))
+            document = self.backend._document
+            previous_bottom = -1
+            for item, entry in zip(visible_images, entries):
+                block = document.findBlock(entry['position'])
+                rect = document.documentLayout().blockBoundingRect(block)
+                self.assertGreaterEqual(item.y() + 1, rect.bottom())
+                self.assertGreaterEqual(item.y() + 1, previous_bottom)
+                previous_bottom = item.y() + item.height()
+                self.assertAlmostEqual(item.width() / item.height(), 1, delta=0.01)
+                # Every text block overlapping the picture must be inset to its right.
+                following = block.next()
+                while following.isValid():
+                    bounds = document.documentLayout().blockBoundingRect(following)
+                    if bounds.top() >= previous_bottom:
+                        break
+                    if bounds.bottom() > item.y():
+                        self.assertGreaterEqual(following.blockFormat().leftMargin() + 1, item.x() + item.width())
+                    following = following.next()
+                self.assertLessEqual(previous_bottom, editor.height() + 1)
+                self.assertLessEqual(editor.y() + previous_bottom, reader.property('contentHeight') + 1)
+            self.assertEqual(document.toPlainText(), self.article['cuerpo'])
+            self.assertEqual(self.backend.marks, [(0, 8, '#ffe88f')])
+
+        def wait_for_layout():
+            # Qt performs resize/reflow in multiple queued passes; wait for the
+            # actual geometry, not a fixed number of milliseconds or frames.
+            for attempt in range(100):
+                QTest.qWait(20)
+                try:
+                    check_layout()
+                    return
+                except AssertionError:
+                    if attempt == 99:
+                        raise
+
+        for size, width in ((24, 900), (14, 900), (20, 720), (16, 1200), (24, 720), (14, 1200)):
+            root.setWidth(width)
+            self.backend.set_reader_font_size(size, False)
+            wait_for_layout()
+            self.assertEqual(editor.property('font').pixelSize(), size)
+        self.backend.set_design(5, False, True)
+        QTest.qWait(80)
+        self.assertEqual(images(), [])
+        self.assertAlmostEqual(editor.height(), editor.property('contentHeight'), delta=1)
+        self.backend.set_design(5, True, True)
+        wait_for_layout()
+
+    def test_reading_mode_hides_chrome_and_restores_window(self):
+        self.backend.reader = self.article
+        self.backend.reader_body = self.article['cuerpo']
+        self.backend.publish()
+        root = self.load_qml()
+        editor = root.findChild(QQuickItem, 'article_text')
+        header = root.findChild(QQuickItem, 'appHeader')
+        sidebar = root.findChild(QQuickItem, 'sidebarPanel')
+        toolbar = root.findChild(QQuickItem, 'readerToolbar')
+        original_visibility = root.visibility()
+        enter = root.findChild(QQuickItem, 'enterReadingMode')
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, enter.mapToScene(enter.boundingRect().center()).toPoint())
+        QTest.qWait(100)
+        self.assertTrue(root.property('reading_mode'))
+        self.assertEqual(root.visibility(), QQuickWindow.FullScreen)
+        self.assertFalse(header.isVisible())
+        self.assertFalse(sidebar.isVisible())
+        self.assertFalse(toolbar.isVisible())
+        self.assertTrue(editor.isVisible())
+        self.assertEqual(editor.property('text'), self.article['cuerpo'])
+        viewer = root.findChild(QObject, 'articleImageViewer')
+        QMetaObject.invokeMethod(viewer, 'open')
+        QTest.qWait(80)
+        QTest.keyClick(root, Qt.Key_Escape)
+        QTest.qWait(200)
+        self.assertFalse(viewer.property('visible'))
+        self.assertTrue(root.property('reading_mode'))
+        exit_button = root.findChild(QQuickItem, 'exitReadingMode')
+        self.assertTrue(exit_button.isVisible())
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, exit_button.mapToScene(exit_button.boundingRect().center()).toPoint())
+        QTest.qWait(80)
+        self.assertFalse(root.property('reading_mode'))
+        self.assertEqual(root.visibility(), original_visibility)
+        self.assertTrue(sidebar.isVisible())
+        self.assertTrue(toolbar.isVisible())
+        root.setProperty('sidebar_visible', False)
+        root.showMaximized()
+        QTest.qWait(80)
+        QMetaObject.invokeMethod(root, 'enter_reading_mode')
+        QTest.qWait(80)
+        QTest.keyClick(root, Qt.Key_Escape)
+        QTest.qWait(80)
+        self.assertFalse(root.property('reading_mode'))
+        self.assertEqual(root.visibility(), QQuickWindow.Maximized)
+        self.assertFalse(sidebar.isVisible())
+        self.assertIsNotNone(self.backend.reader)
+        QMetaObject.invokeMethod(root, 'enter_reading_mode')
+        QTest.qWait(80)
+        self.backend.close_article()
+        QTest.qWait(80)
+        self.assertFalse(root.property('reading_mode'))
+        self.assertEqual(root.visibility(), QQuickWindow.Maximized)
+
+    def test_inline_image_opens_zoom_viewer_and_closes_with_escape(self):
+        source = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8//8/AwMDEwMDAwMDAwAkBgMB/DXemwAAAABJRU5ErkJggg=='
+        self.article['cuerpo'] = 'Inicio.\n\n' + 'Texto junto a la imagen. ' * 20
+        self.article['imagenes_cuerpo'] = [dict(paragraph=0, source=source, alt='Foto de prueba')]
+        self.backend.reader = self.article
+        self.backend.reader_body = self.article['cuerpo']
+        self.backend.publish()
+        root = self.load_qml()
+        QTest.qWait(100)
+        editor = root.findChild(QQuickItem, 'article_text')
+        picture = next(item for item in editor.childItems() if item.objectName() == 'inlineArticleImage')
+        self.assertLess(picture.width(), editor.width() / 2)
+        point = picture.mapToScene(picture.boundingRect().center()).toPoint()
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, point)
+        QTest.qWait(80)
+        dialog = root.findChild(QObject, 'articleImageViewer')
+        self.assertTrue(dialog.property('visible'))
+        self.assertEqual(dialog.property('image_description'), 'Foto de prueba')
+        self.assertEqual(dialog.property('zoom'), 1)
+        plus = root.findChild(QQuickItem, 'enlargeArticleImage')
+        QTest.mouseClick(root, Qt.LeftButton, Qt.NoModifier, plus.mapToScene(plus.boundingRect().center()).toPoint())
+        self.assertGreater(dialog.property('zoom'), 1)
+        QTest.keyClick(root, Qt.Key_Escape)
+        QTest.qWait(200)
+        self.assertFalse(dialog.property('visible'))
+        self.assertEqual(self.backend.reader_body, self.article['cuerpo'])
+
+    def test_reader_sizes_and_inline_images_preserve_offsets(self):
+        self.article['cuerpo'] = 'Uno 😀.\n\nSegundo párrafo.'
+        self.article['imagenes_cuerpo'] = [dict(paragraph=0, source='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8//8/AwMDEwMDAwMDAwAkBgMB/DXemwAAAABJRU5ErkJggg==', alt='Prueba')]
+        self.backend.reader = self.article
+        self.backend.reader_body = self.article['cuerpo']
+        self.backend.publish()
+        root = self.load_qml()
+        editor = root.findChild(QQuickItem, 'article_text')
+        height_with_images = editor.property('contentHeight')
+        self.backend.set_design(5, False, True)
+        QTest.qWait(50)
+        self.assertGreater(height_with_images, editor.property('contentHeight'))
+        reader = root.findChild(QQuickItem, 'reader_page')
+        height_without_images = reader.property('contentHeight')
+        self.article['imagenes_cuerpo'][0]['paragraph'] = 1
+        self.backend.set_design(5, True, True)
+        QTest.qWait(50)
+        self.assertGreater(reader.property('contentHeight'), height_without_images + 250)
+        self.article['imagenes_cuerpo'][0]['paragraph'] = 0
+        self.backend.set_design(5, True, True)
+        self.backend.set_reader_font_size(24, True)
+        self.assertEqual(Service(self.tmp.name).config['tamano_letra_lectura'], 24)
+        self.backend.set_reader_font_size(14, False)
+        self.assertEqual(self.backend.state['reader']['font_size'], 14)
+        self.assertEqual(self.backend.state['default_font_size'], 24)
+        document = QTextDocument(self.article['cuerpo'])
+        self.backend.attach_document(document)
+        self.assertEqual(document.toPlainText(), self.article['cuerpo'])
+        self.assertGreater(document.begin().next().blockFormat().leftMargin(), 0)
+        self.assertEqual(self.backend.inline_images()[0]['position'], 7)
+        self.backend.mark(0, 3, '#ffe88f')
+        self.backend.set_design(5, False, True)
+        self.assertEqual(self.backend.inline_images(), [])
+        self.assertEqual(document.firstBlock().blockFormat().bottomMargin(), 0)
+        self.assertEqual(document.toPlainText(), self.article['cuerpo'])
+        self.assertEqual(self.backend.marks, [(0, 3, '#ffe88f')])
 
     def test_shortcut_modes_preserve_source_and_feed(self):
         source = self.service.config['categorias'][0]['sitios'][0]
@@ -590,9 +821,10 @@ class QtTests(unittest.TestCase):
         fresh = dict(self.article, link='https://example.com/new')
         self.service.apply_refresh(({'https://example.com': [self.article, other, fresh]}, {}, []))
         self.backend.toggle_read(other['link'])
-        self.backend.toggle_saved(self.article['link'])
         self.backend.toggle_dismissed(self.article['link'])
         self.assertEqual([a['link'] for a in self.service.filtered()], [fresh['link'], other['link'], self.article['link']])
+        self.backend.toggle_saved(self.article['link'])
+        self.assertEqual([a['link'] for a in self.service.filtered()], [fresh['link'], other['link']])
         reopened = Service(self.tmp.name)
         self.assertIn(self.article['link'], reopened.dismissed)
         self.assertNotIn(self.article['link'], reopened.seen)
@@ -601,6 +833,8 @@ class QtTests(unittest.TestCase):
         self.assertTrue(self.backend.article_view(self.article)['dismissed'])
         self.backend.toggle_dismissed(self.article['link'])
         self.assertFalse(Service(self.tmp.name).dismissed)
+        self.assertEqual([a['link'] for a in self.service.filtered()], [fresh['link'], other['link']])
+        self.backend.toggle_saved(self.article['link'])
         self.assertEqual(self.service.filtered()[0]['link'], self.article['link'])
 
     def test_bulk_read_scopes_and_persistent_undo(self):
@@ -744,10 +978,12 @@ class QtTests(unittest.TestCase):
         self.assertEqual(len(backend.state['articles']), 1)
         backend.toggle_read(link)
         backend.toggle_archived(link)
+        self.assertEqual(reopened.filtered(), [])  # Still in Guardados.
+        backend.toggle_saved(link)
         self.assertEqual(len(reopened.filtered()), 1)
         self.assertFalse(Service(self.tmp.name).seen)
         self.assertEqual(Service(self.tmp.name).filtered('archivados'), [])
-        self.assertTrue(reopened.library.contains('guardados', link))
+        self.assertFalse(reopened.library.contains('guardados', link))
         backend.deleteLater()
 
     def test_restore_archived_article_missing_from_latest_feed(self):
@@ -798,7 +1034,7 @@ class QtTests(unittest.TestCase):
         for page in ('design','sources','radar','guardados','descargas','archivados','historial','feed'):
             self.backend.navigate(page,'','');QTest.qWait(60)
         self.backend.open_article(self.article['link'])
-        for _ in range(20):
+        for _ in range(150):
             QTest.qWait(20)
             if self.backend.state['reader'].get('body'):break
         reader=root.findChild(QObject,'article_text')

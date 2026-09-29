@@ -15,6 +15,17 @@ class ReaderStore:
                 translation TEXT, original_marks TEXT NOT NULL DEFAULT '[]',
                 translated_marks TEXT NOT NULL DEFAULT '[]')''')
 
+            database.execute('CREATE TABLE IF NOT EXISTS reader_images (link TEXT PRIMARY KEY, images TEXT NOT NULL)')
+
+    def read_images(self, link):
+        with self.connect() as database:
+            row = database.execute('SELECT images FROM reader_images WHERE link=?', (link,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_images(self, link, images):
+        with self.connect() as database:
+            database.execute('INSERT OR REPLACE INTO reader_images VALUES (?, ?)', (link, json.dumps(images)))
+
     @contextmanager
     def connect(self):
         database = sqlite3.connect(self.path, timeout=15)

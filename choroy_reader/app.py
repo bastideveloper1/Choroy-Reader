@@ -32,7 +32,7 @@ def run():
     legacy_root = config_root / 'noticias'
     default_root = legacy_root if (legacy_root / 'config.json').is_file() else config_root / 'choroy_reader'
     root = args.data_dir or Path(os.environ.get('CHOROY_READER_DATA_DIR', os.environ.get('MINIMALFEED_DATA_DIR', default_root)))
-    service = Service(root)
+    service = Service(root, housekeeping=False)
     if args.demo:
         service.config['categorias'] = [{'nombre':'Tecnología', 'sitios':[{'nombre':'Choroy Reader','url':'https://example.com','url_feed':'https://example.com/feed'}]}]
         article = dict(titulo='Choroy Reader: tus fuentes y tu lectura en un mismo lugar', titulo_es='Un lector pensado para leer con calma',
@@ -48,8 +48,8 @@ def run():
     engine.load(QUrl.fromLocalFile(str(Path(__file__).parent/'qml/main.qml')))
     if not engine.rootObjects():
         return 1
-    if not args.no_network and not args.demo:
-        QTimer.singleShot(0, backend.refresh)
+    if not args.demo:
+        QTimer.singleShot(0, lambda: backend.startup(allow_network=not args.no_network))
     if args.smoke_test or args.screenshot:
         def finish():
             if args.screenshot:

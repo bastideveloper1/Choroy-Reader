@@ -1,5 +1,7 @@
 """Puente QObject: las tareas de red nunca modifican la interfaz desde un hilo."""
 import html
+import base64
+from functools import lru_cache
 import io
 import threading
 from pathlib import Path
@@ -11,6 +13,16 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from choroy_reader.library import find_matches
 from . import core
+from .article_model import ArticleModel
+
+
+@lru_cache(maxsize=64)
+def image_ratio(source):
+    try:
+        with Image.open(io.BytesIO(base64.b64decode(source.split(',', 1)[1]))) as image:
+            return image.width / max(1, image.height)
+    except (ValueError, IndexError, OSError):
+        return 4 / 3
 
 
 MARKER_COLORS = [
@@ -27,6 +39,7 @@ class Backend(QObject):
     finished = Signal(object)
     progress = Signal(str)
     error = Signal(str)
+    document_layout_changed = Signal()
     document_search = Signal(int, int)  # position, count
 
     def __init__(self, service, asset_dir, parent=None):
@@ -47,6 +60,7 @@ class Backend(QObject):
         self.radar_busy = False
         self.radar_translating = set()
         self.reader = None
+        self.reader_font_size = self.service.config.get('tamano_letra_lectura', 16)
         self.reader_body = ''
         self.reader_status = ''
         self.translated = False
@@ -72,7 +86,9 @@ class Backend(QObject):
         self.finished.connect(self._finish)
         self.progress.connect(self._progress)
         self._state = {}
-        self.storage_info = self._storage_snapshot()
+        self.article_model = ArticleModel(self)
+        self.storage_info = dict.fromkeys(('data_path', 'installation_path', 'database', 'articles', 'images', 'cache', 'other', 'user_total', 'installation_total', 'recoverable'), 'Calculando…')
+        self.storage_info.update(installation_shared=False, recoverable_bytes=0)
         self.publish()
 
     @staticmethod
@@ -137,7 +153,12 @@ class Backend(QObject):
     @Slot(str)
     def _progress(self, value):
         self.status = value
-        self.publish()
+        self._state = dict(self._state, status=value)
+        self.changed.emit()
+
+    @Property(QObject, constant=True)
+    def articleModel(self):
+        return self.article_model
 
     @Property('QVariantMap', notify=changed)
     def state(self):
@@ -171,10 +192,11 @@ class Backend(QObject):
         progress = self.service.config.get('progreso_lectura', {}).get(link, {})
         position = progress.get('es' if self.reader and self.reader['link'] == link and self.translated else 'original', {})
         collections = [item['name'] for item in self.service.config.get('colecciones', []) if link in item.get('links', [])]
-        return dict(source_url=article.get('source_url', ''), reading_progress=position, link=link, title=article.get('titulo', ''), title_html=self.title_html(article.get('titulo', '')),
+        return dict(web_extracted=article.get('origen') == 'web', source_url=article.get('source_url', ''), reading_progress=position, link=link, title=article.get('titulo', ''), title_html=self.title_html(article.get('titulo', '')),
                     translation=article.get('titulo_es') or '', translation_html=self.title_html(article.get('titulo_es') or ''),
                     show_translation=bool(self.service.config.get('mostrar_titulo_es', True) and translate_enabled and article.get('traducir_es')), source=article.get('fuente', ''),
-                    image=self.service.image_url(article.get('imagen')), date=core.relative_date(article.get('fecha')),
+                    image=self.service.image_url(article.get('imagen')) or QUrl.fromLocalFile(str(self.asset_dir / 'noimage.png')).toString(),
+                    date=('Detectado: ' if article.get('fecha_detectada') else '') + core.relative_date(article.get('fecha')),
                     saved=self.service.library.contains('guardados', link), downloaded=self.service.library.contains('descargas', link),
                     downloading=link in self.downloads, seen=link in self.service.seen,
                     dismissed=link in self.service.dismissed, archived=self.service.library.contains('archivados', link),
@@ -193,7 +215,7 @@ class Backend(QObject):
                 direct_access = shortcut or (show_shortcut and bool(src.get('sin_feed')))
                 sources.append(dict(category_index=ci, category_name=cat['nombre'], index=si, shortcut=shortcut, show_shortcut=show_shortcut,
                                     direct_access=direct_access,
-                                    no_feed=bool(src.get('sin_feed')) and not direct_access, name=src['nombre'], url=src['url'], feed=src.get('url_feed') or '',
+                                    web=bool(src.get('extraccion_web')), no_feed=bool(src.get('sin_feed')) and not direct_access, name=src['nombre'], url=src['url'], feed=src.get('url_feed') or '',
                                     maximum=src.get('limite_articulos', 100), translate=src.get('modo_titulo', 'en_es') != 'solo_ingles' and src.get('traduccion_es', True),
                                     icon=self.service.favicon_url(src)))
             icon = cat.get('icon') or ''
@@ -202,7 +224,7 @@ class Backend(QObject):
             categories.append(dict(index=ci, name=cat['nombre'], icon=icon, sources=sources))
         reader = self.article_view(self.reader) if self.reader else {}
         if reader:
-            reader.update(body=self.reader_body, status=self.reader_status, translated=self.translated,
+            reader.update(font_size=self.reader_font_size, inline_images=self.inline_images(), body=self.reader_body, status=self.reader_status, translated=self.translated,
                           translating=self.translating, ready=bool(self.reader.get('cuerpo')),
                           show_image=cfg.get('mostrar_imagenes_lectura', True))
         collection_items = [dict(id='', name='Todas las colecciones')] + [dict(id=item['id'], name=item['name']) for item in cfg.get('colecciones', [])]
@@ -219,7 +241,7 @@ class Backend(QObject):
                                key=lambda src: cfg.get('shortcut_order', []).index(src['url']) if src['url'] in cfg.get('shortcut_order', []) else len(cfg.get('shortcut_order', []))),
                            read_batch_count=len(self.read_batch - self.service.seen), read_scope=self.read_scope, read_undo=cfg.get('lectura_deshacer', {}),
                            portability_busy=self.portability_busy, portability_ready=self.active_jobs == 0 and not self.portability_busy, history_days=cfg.get('historial_dias', 0), article_period=cfg.get('periodo_articulos', 'dos_dias'), palette=self.palette(), theme=cfg.get('color', 'gris'), themes=themes, categories=categories,
-                           columns=cfg.get('articulos_por_fila', 5), show_images=cfg.get('mostrar_imagenes_lectura', True),
+                           default_font_size=cfg.get('tamano_letra_lectura', 16), columns=cfg.get('articulos_por_fila', 5), show_images=cfg.get('mostrar_imagenes_lectura', True),
                            translate_titles=cfg.get('mostrar_titulo_es', True), radar=cfg.get('radar_activo', False),
                            radar_words=list(cfg.get('radar_palabras', [])), radar_busy=self.radar_busy,
                            radar_bilingual=bool(cfg.get('radar_bilingue')),
@@ -229,13 +251,26 @@ class Backend(QObject):
                            collections=collection_items, collection_filter=self.collection_filter,
                            articles=[self.article_view(a) for a in articles],
                            logo=QUrl.fromLocalFile(str(self.asset_dir / 'choroy_reader_logo.png')).toString(),
-                           quote_preview=self.quote_preview, quote_busy=self.quote_busy,
+                           quote_backgrounds=core.QUOTE_BACKGROUNDS, quote_preview=self.quote_preview, quote_busy=self.quote_busy,
                            quote_can_save=self.quote_image is not None and not self.quote_busy,
                            quote_has_image=bool(self.quote_data and self.quote_data['article'].get('imagen')),
                            quote_is_translated=bool(self.quote_data and self.quote_data['translated']),
                            quote_title_has_translation=bool(self.quote_data and self.quote_data['article'].get('titulo_es')),
                            downloads_folder=QUrl.fromLocalFile(QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)).toString())
+        self.article_model.update(self._state['articles'])
         self.changed.emit()
+
+    def startup(self, allow_network=True):
+        cached = bool(self.service.articles)
+        if cached:
+            self.status = 'Feed guardado · Pulsa Actualizar feed para buscar novedades'
+            self.publish()
+        def done(value, error):
+            if error:
+                self.error.emit(error)
+            if allow_network and not cached:
+                self.refresh()
+        self.background(self.service.initialize_history, done)
 
     @Slot()
     def refresh(self):
@@ -316,12 +351,37 @@ class Backend(QObject):
             self.publish()
             self.render_document()
 
+    def inline_images(self):
+        if not self.reader or not self.service.config.get('mostrar_imagenes_lectura', True):
+            return []
+        paragraphs = self.reader_body.split('\n\n')
+        images = []
+        for entry in self.reader.get('imagenes_cuerpo') or []:
+            index = min(entry['paragraph'], len(paragraphs) - 1)
+            prefix = '\n\n'.join(paragraphs[:index + 1])
+            position = len(prefix.encode('utf-16-le')) // 2
+            stack = sum(1 for image in images if image['position'] == position)
+            if entry.get('source'):
+                images.append(dict(source=entry['source'], alt=entry.get('alt', ''), position=position, stack=stack))
+        return images
+
+    @Slot(int, bool)
+    def set_reader_font_size(self, size, default=False):
+        if size not in (14, 16, 20, 24):
+            return
+        self.reader_font_size = size
+        if default:
+            self.service.config['tamano_letra_lectura'] = size
+            self.service.save_config()
+        self.publish()
+
     @Slot(int, bool, bool)
     def set_design(self, columns, images, translations):
         self.service.config.update(articulos_por_fila=max(1,min(5,columns)), mostrar_imagenes_lectura=images,
                                    mostrar_titulo_es=translations)
         self.service.save_config()
         self.publish()
+        self.render_document()
 
     @Slot()
     def toggle_radar(self):
@@ -434,6 +494,7 @@ class Backend(QObject):
         offline = self.page == 'descargas'
         self.reader_token += 1
         token = self.reader_token
+        self.reader_font_size = self.service.config.get('tamano_letra_lectura', 16)
         self.reader, self.reader_body, self.reader_status = dict(article), '', 'Cargando artículo…'
         self.translated, self.translating = False, False
         self.publish()
@@ -856,6 +917,7 @@ class Backend(QObject):
                 cats[category]['sitios'].insert(index, source)
             return False
         source.pop('sin_feed', None)
+        source.pop('extraccion_web', None)
         source['source_type'] = 'shortcut' if shortcut else 'feed'
         source['show_shortcut'] = shortcut if show_shortcut is None else show_shortcut
         source.update(nombre=name.strip(), url=url, url_feed=feed.strip() or None, limite_articulos=max(1,min(1000,maximum)),
@@ -881,10 +943,11 @@ class Backend(QObject):
                     return False
                 if not error:
                     source['url_feed'] = found
-                    source['sin_feed'] = not bool(found)
+                    source['sin_feed'] = False
+                    source['extraccion_web'] = not bool(found)
                     self.service.save_config()
                 self.status = ('No se pudo comprobar el feed · Reintenta con Actualizar feed' if error else
-                               'Fuente sin feed detectado · Disponible como enlace' if not found else
+                               'Fuente web sin RSS · Pulsa Actualizar feed para extraer publicaciones' if not found else
                                'Feed encontrado · Pulsa Actualizar feed para cargar artículos')
                 self.publish()
             self.background(discover, discovered)
@@ -919,7 +982,8 @@ class Backend(QObject):
 
     @Slot(bool, bool, str)
     @Slot(bool, bool, bool, str)
-    def update_quote(self, spanish, image, title_spanish=False, theme=None):
+    @Slot(bool, bool, bool, str, str)
+    def update_quote(self, spanish, image, title_spanish=False, theme=None, background=""):
         # Conserva compatibilidad con la llamada anterior de tres argumentos.
         if theme is None and isinstance(title_spanish, str):
             theme, title_spanish = title_spanish, False
@@ -944,7 +1008,7 @@ class Backend(QObject):
             title = a.get('titulo_es') if title_spanish and a.get('titulo_es') else a.get('titulo', '')
             img = core.create_quote_image(text, a.get('fuente',''), a['link'], spanish,
                     title=title, color=core.THEME_PALETTE[theme]['base_fuerte'],
-                    image_bytes=a.get('imagen') if image else None, original_language=a.get('idioma_original',''), theme=theme)
+                    image_bytes=a.get('imagen') if image else None, original_language=a.get('idioma_original',''), theme=theme, background=background)
             return img, translated_text
         def done(value, error):
             if token != self.quote_token:
@@ -1097,7 +1161,19 @@ class Backend(QObject):
     def attach_document(self, quick_document):
         # Keep the Qt Quick wrapper alive alongside its document.
         self._quick_document = quick_document
-        self._document = quick_document.textDocument() if hasattr(quick_document, 'textDocument') else quick_document
+        document = quick_document.textDocument() if hasattr(quick_document, 'textDocument') else quick_document
+        if self._document is not document:
+            if self._document is not None:
+                try:
+                    layout = self._document.documentLayout()
+                    layout.documentSizeChanged.disconnect(self._notify_document_layout)
+                    layout.update.disconnect(self._notify_document_layout)
+                except (RuntimeError, TypeError):
+                    pass
+            layout = document.documentLayout()
+            layout.documentSizeChanged.connect(self._notify_document_layout)
+            layout.update.connect(self._notify_document_layout)
+        self._document = document
         self.marks, self.find_text, self.find_index = [], '', -1
         self._document_key = None
         if self.reader and self.reader_body:
@@ -1190,12 +1266,97 @@ class Backend(QObject):
     def remove_mark_at(self, position):
         self.remove_marks(position, position)
 
+    def _notify_document_layout(self, *args):
+        self.document_layout_changed.emit()
+
+    def layout_image_margins(self, doc):
+        """Flow paragraphs beside images without inserting annotation characters."""
+        entries = self.inline_images()
+        # Work on a copy: resetting margins on the live document would cause
+        # repeated relayout signals and visible jumps on every measurement.
+        measure = doc.clone()
+        width = max(1, doc.textWidth() if doc.textWidth() > 0 else 576)
+        measure.setTextWidth(width)
+        block = measure.begin()
+        while block.isValid():
+            fmt = block.blockFormat()
+            fmt.setLeftMargin(0)
+            fmt.setBottomMargin(0)
+            QTextCursor(block).setBlockFormat(fmt)
+            block = block.next()
+        groups = {}
+        for entry in entries:
+            position = measure.findBlock(min(entry['position'], measure.characterCount() - 1)).position()
+            groups.setdefault(position, []).append(entry)
+        layout = measure.documentLayout()
+        images, previous_bottom = [], -12
+        for position, group in groups.items():
+            layout.documentSize()
+            anchor = measure.findBlock(position)
+            rect = layout.blockBoundingRect(anchor)
+            y = max(rect.bottom() + 12, previous_bottom + 12)
+            following = anchor.next()
+            while following.isValid() and not following.text().strip():
+                following = following.next()
+            beside = width >= 520 and following.isValid() and len(group) == 1
+            if beside:
+                entry = group[0]
+                ratio = image_ratio(entry['source'])
+                image_width = min(width * 0.40, 300, 420 * ratio)
+                image_height = image_width / ratio
+                images.append(dict(entry, x=0, y=y, width=image_width, height=image_height, beside=True,
+                                   anchor_position=position, anchor_offset=y-rect.bottom()))
+                previous_bottom = y + image_height
+                fmt = anchor.blockFormat()
+                fmt.setBottomMargin(y - rect.bottom())
+                QTextCursor(anchor).setBlockFormat(fmt)
+                block = anchor.next()
+                while block.isValid():
+                    rect = layout.blockBoundingRect(block)
+                    if rect.top() >= previous_bottom + 12:
+                        break
+                    fmt = block.blockFormat()
+                    fmt.setLeftMargin(image_width + 18)
+                    QTextCursor(block).setBlockFormat(fmt)
+                    block = block.next()
+            else:
+                for entry in group:
+                    ratio = image_ratio(entry['source'])
+                    image_width = min(width, 700 * ratio)
+                    image_height = image_width / ratio
+                    images.append(dict(entry, x=(width-image_width)/2, y=y, width=image_width, height=image_height, beside=False,
+                                       anchor_position=position, anchor_offset=y-rect.bottom()))
+                    previous_bottom = y + image_height
+                    y = previous_bottom + 12
+                fmt = anchor.blockFormat()
+                fmt.setBottomMargin(y - rect.bottom())
+                QTextCursor(anchor).setBlockFormat(fmt)
+        block, target = measure.begin(), doc.begin()
+        while block.isValid() and target.isValid():
+            wanted, actual = block.blockFormat(), target.blockFormat()
+            if (wanted.leftMargin(), wanted.bottomMargin()) != (actual.leftMargin(), actual.bottomMargin()):
+                actual.setLeftMargin(wanted.leftMargin())
+                actual.setBottomMargin(wanted.bottomMargin())
+                QTextCursor(target).setBlockFormat(actual)
+            block, target = block.next(), target.next()
+        actual_layout = doc.documentLayout()
+        actual_layout.documentSize()
+        for entry in images:
+            anchor = doc.findBlock(entry.pop('anchor_position'))
+            entry['y'] = actual_layout.blockBoundingRect(anchor).bottom() + entry.pop('anchor_offset')
+        return images
+
+    @Slot(QObject, result='QVariantList')
+    def reader_image_layout(self, quick_document):
+        return self.layout_image_margins(quick_document.textDocument())
+
     def render_document(self):
         doc = self._document
         if not doc:
             return
         try:
             cursor = QTextCursor(doc)
+            self.layout_image_margins(doc)
             cursor.select(QTextCursor.Document)
             fmt = QTextCharFormat()
             fmt.setBackground(QColor('transparent'))

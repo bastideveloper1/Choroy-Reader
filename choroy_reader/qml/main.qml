@@ -14,6 +14,30 @@ ApplicationWindow {
     property var p: s.palette
     property real feed_scroll: 0
     property bool sidebar_visible: true
+    property bool reading_mode: false
+    property int previous_visibility: Window.Windowed
+    property bool reader_open: !!s.reader.link
+    onReader_openChanged: { if (!reader_open) leave_reading_mode(); }
+    onVisibilityChanged: function() {
+        if (window.reading_mode && (window.visibility === Window.Windowed || window.visibility === Window.Maximized))
+            window.reading_mode = false;
+    }
+    function enter_reading_mode() {
+        if (!reader_open || reading_mode) return;
+        previous_visibility = visibility;
+        reading_mode = true;
+        showFullScreen();
+    }
+    function leave_reading_mode() {
+        if (!reading_mode) return;
+        reading_mode = false;
+        visibility = previous_visibility;
+    }
+    Shortcut {
+        sequence: "Escape"; context: Qt.WindowShortcut
+        enabled: window.reading_mode && !image_viewer.visible && !quote_dialog.visible
+        onActivated: window.leave_reading_mode()
+    }
     property bool settings_open: false
     property var expanded_categories: ({})
     property var managed_categories: ({})
@@ -196,6 +220,18 @@ ApplicationWindow {
     ColumnLayout {
         anchors.fill: parent; spacing: 0
         Rectangle {
+            objectName: "readingModeBar"
+            visible: window.reading_mode
+            Layout.fillWidth: true; Layout.preferredHeight: 52; color: p.bg
+            Action {
+                objectName: "exitReadingMode"
+                text: "Salir del modo lectura · Esc"
+                anchors.right: parent.right; anchors.rightMargin: 16; anchors.verticalCenter: parent.verticalCenter
+                onClicked: window.leave_reading_mode()
+            }
+        }
+        Rectangle {
+            objectName: "appHeader"; visible: !window.reading_mode
             Layout.fillWidth: true; Layout.preferredHeight: 84; color: p.bg
             Action {
                 objectName: "sidebarToggle"
@@ -216,7 +252,7 @@ ApplicationWindow {
         RowLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
             Rectangle {
-                objectName: "sidebarPanel"; visible: window.sidebar_visible
+                objectName: "sidebarPanel"; visible: window.sidebar_visible && !window.reading_mode
                 Layout.preferredWidth: 280; Layout.fillHeight: true; color: p.panel
                 ColumnLayout {
                     anchors.fill: parent; spacing: 2
@@ -287,7 +323,7 @@ ApplicationWindow {
                                                 id: source_button
                                                 required property var modelData
                                                 font.pixelSize: 12
-                                                text: modelData.name + (modelData.direct_access ? " ↗" : modelData.no_feed ? " · Sin feed" : "")
+                                                text: modelData.name + (modelData.direct_access ? " ↗" : modelData.no_feed ? " · Sin publicaciones" : modelData.web ? " · Web" : "")
                                                 favicon: modelData.icon; warning: modelData.no_feed; shortcut: modelData.direct_access; compact: true
                                                 active: s.source === modelData.url; Layout.fillWidth: true
                                                 onClicked: modelData.direct_access ? backend.open_url(modelData.url) : backend.navigate("feed",category_delegate.modelData.name,modelData.url)
@@ -540,78 +576,75 @@ ApplicationWindow {
                 text: "Artículos recibidos, aunque ya no aparezcan en el RSS. Se conservan sus estados; para garantizar la lectura sin conexión, descárgalos."
                 color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
             }
-            ScrollView {
-                id: feed_scroll_view; Component.onCompleted: Qt.callLater(function(){feed_scroll_view.contentItem.contentY=window.feed_scroll;}); Layout.fillWidth: true; Layout.fillHeight: true; clip: true; contentWidth: availableWidth
-                ColumnLayout {
-                    width: feed_scroll_view.availableWidth; spacing: 10
-                    Label { text: s.busy ? "Cargando artículos e imágenes…" : s.query ? "No hay títulos que coincidan." : "No hay artículos en esta sección."; visible: s.articles.length === 0; color: p.muted; Layout.fillWidth: true; Layout.margins: 20; wrapMode: Text.Wrap }
-                    GridLayout {
-                        id: cards_grid;
-                        property real card_height: children.reduce(function(height, child) { return Math.max(height, child.implicitHeight || 0); }, 0)
-                         Layout.fillWidth: true; Layout.margins: 12; columns: Math.max(1,Math.min(s.columns,Math.floor((feed_scroll_view.availableWidth-24)/290))); columnSpacing: 8; rowSpacing: 8
-                        Repeater {
-                            model: s.articles
-                            delegate: Rectangle {
-                                id: card; required property var modelData
-                                Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 1; Layout.preferredHeight: cards_grid.card_height
-                                implicitHeight: card_body.implicitHeight + 2; color: p.card; radius: 2
-                                border.color: card_hover.hovered ? p.accent : p.border; border.width: 1
-                                Rectangle {
-                                    anchors.fill: parent; radius: parent.radius; z: 1
-                                    visible: card.modelData.dismissed || card.modelData.seen
-                                    color: "#20242a"; opacity: 0.42
-                                }
-                                IconAction {
-                                    anchors.bottom: parent.bottom; anchors.right: parent.right; anchors.margins: 13; z: 2
-                                    kind: "dismiss"; stateActive: card.modelData.dismissed
-                                    hint: card.modelData.dismissed ? "Deshacer descarte" : "No me interesa · Enviar al final"
-                                    onClicked: backend.toggle_dismissed(card.modelData.link)
-                                }
-                                RowLayout {
-                                    anchors.left: parent.left; anchors.bottom: parent.bottom
-                                    anchors.leftMargin: 13; anchors.bottomMargin: 13; z: 2
-                                            spacing: 3
-                                            IconAction { kind: "read"; stateActive: card.modelData.seen; hint: card.modelData.seen ? "Marcar como no leído" : "Marcar como leído"; onClicked: backend.toggle_read(card.modelData.link) }
-                                            IconAction { kind: "archive"; stateActive: card.modelData.archived; hint: card.modelData.archived ? "Restaurar al feed" : "Archivar artículo"; onClicked: backend.toggle_archived(card.modelData.link) }
-                                            IconAction { kind: "save"; filled: card.modelData.saved; hint: filled ? "Quitar guardado" : "Guardar artículo"; onClicked: backend.toggle_saved(card.modelData.link) }
-                                            IconAction { kind: card.modelData.downloaded ? "delete" : "download"; filled: card.modelData.downloaded; enabled: !card.modelData.downloading; hint: filled ? "Eliminar descarga" : "Descargar para leer sin conexión"; onClicked: backend.toggle_download(card.modelData.link) }
-                                        }
-                                HoverHandler { id: card_hover }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; acceptedButtons: Qt.LeftButton | Qt.RightButton; onClicked: mouse => { if (mouse.button === Qt.RightButton) article_menu.popup(); else {window.feed_scroll=feed_scroll_view.contentItem.contentY;backend.open_article(card.modelData.link);} } }
-                                Menu {
-                                    id: article_menu
-                                    property var entry: window.source_for(card.modelData.source_url)
-                                    MenuItem { text: "Convertir fuente en atajo web (sin noticias)"; enabled: !!article_menu.entry; onTriggered: backend.set_source_shortcut(article_menu.entry.cat.index, article_menu.entry.src.index, "only") }
-                                    MenuItem { text: "Añadir fuente a atajos web (con noticias)"; enabled: !!article_menu.entry; onTriggered: backend.set_source_shortcut(article_menu.entry.cat.index, article_menu.entry.src.index, "add") }
-                                    MenuItem { text: "Ir a administrar fuente…"; enabled: !!article_menu.entry; onTriggered: window.manage_category(article_menu.entry.cat, article_menu.entry.src) }
-                                }
-                                ColumnLayout {
-                                    id: card_body; anchors.fill: parent; anchors.margins: 1; spacing: 0
-                                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: cards_grid.columns === 1 ? 200 : 150; color: p.hover; clip: true
-                                        Image { anchors.fill: parent; source: card.modelData.image; fillMode: Image.PreserveAspectCrop; asynchronous: true; smooth: true; mipmap: true }
-                                        Label { anchors.centerIn: parent; visible: card.modelData.image === ""; text: "Imagen no disponible"; color: p.muted; font.pixelSize: 11 }
-                                    }
-                                    ColumnLayout {
-                                        Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 12; spacing: 8
-                                        RadarBadge { article: card.modelData }
-                                        RowLayout { Layout.fillWidth: true
-                                            Label { text: card.modelData.source; color: p.accent; font.bold: true; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                                            Label { text: card.modelData.date; color: p.muted; font.pixelSize: 10 }
-                                        }
-                                        Text { text: card.modelData.title_html; textFormat: Text.RichText; color: card.modelData.seen || card.modelData.dismissed ? p.muted : p.text; font.pixelSize: cards_grid.columns === 1 ? 15 : 13; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                                        RowLayout { visible: card.modelData.show_translation && card.modelData.translation.length > 0; Layout.fillWidth: true; spacing: 6
-                                            Rectangle { width: 16; height: 16; radius: 8; color: "#c9293b"; Layout.alignment: Qt.AlignTop
-                                                Rectangle { anchors.centerIn: parent; width: 15; height: 7; radius: 1; color: "#f6c645" }
-                                            }
-                                            Text { text: card.modelData.translation_html; textFormat: Text.RichText; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; font.pixelSize: 13 }
-                                        }
-                                        Action { visible: s.page === "retirados"; text: "Recuperar historial"; active: true; Layout.fillWidth: true; onClicked: backend.restore_history(card.modelData.link) }
-                                        Label { visible: card.modelData.dismissed; text: "Descartado · No me interesa"; color: p.muted; font.bold: true; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                                        Item { Layout.fillHeight: true; Layout.minimumHeight: 0 }
-                                        Item { Layout.fillWidth: true; Layout.preferredHeight: 34 }
-                                    }
-                                }
+            GridView {
+                id: feed_scroll_view; objectName: "feedGrid"
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 12
+                clip: true; boundsBehavior: Flickable.StopAtBounds
+                property int columns: Math.max(1, Math.min(s.columns, Math.floor(width / 290)))
+                cellWidth: width / columns; cellHeight: columns === 1 ? 510 : 460
+                cacheBuffer: cellHeight
+                model: backend.articleModel
+                ScrollBar.vertical: ScrollBar {}
+                Component.onCompleted: Qt.callLater(function(){contentY=Math.max(0, Math.min(window.feed_scroll, contentHeight-height));})
+                Label { text: s.busy ? "Cargando artículos e imágenes…" : s.query ? "No hay títulos que coincidan." : "No hay artículos en esta sección."; visible: feed_scroll_view.count === 0; color: p.muted; width: parent.width; padding: 20; wrapMode: Text.Wrap }
+                delegate: Rectangle {
+                    objectName: "feedCard"
+                    id: card; required property var modelData
+                    width: feed_scroll_view.cellWidth - 8; height: feed_scroll_view.cellHeight - 8; color: p.card; radius: 2
+                    border.color: card_hover.hovered ? p.accent : p.border; border.width: 1
+                    Rectangle {
+                        anchors.fill: parent; radius: parent.radius; z: 1
+                        visible: card.modelData.dismissed || card.modelData.seen
+                        color: "#20242a"; opacity: 0.42
+                    }
+                    IconAction {
+                        anchors.bottom: parent.bottom; anchors.right: parent.right; anchors.margins: 13; z: 2
+                        kind: "dismiss"; stateActive: card.modelData.dismissed
+                        hint: card.modelData.dismissed ? "Deshacer descarte" : "No me interesa · Enviar al final"
+                        onClicked: backend.toggle_dismissed(card.modelData.link)
+                    }
+                    RowLayout {
+                        anchors.left: parent.left; anchors.bottom: parent.bottom
+                        anchors.leftMargin: 13; anchors.bottomMargin: 13; z: 2
+                                spacing: 3
+                                IconAction { kind: "read"; stateActive: card.modelData.seen; hint: card.modelData.seen ? "Marcar como no leído" : "Marcar como leído"; onClicked: backend.toggle_read(card.modelData.link) }
+                                IconAction { kind: "archive"; stateActive: card.modelData.archived; hint: card.modelData.archived ? "Quitar de Archivados" : "Archivar artículo"; onClicked: backend.toggle_archived(card.modelData.link) }
+                                IconAction { kind: "save"; filled: card.modelData.saved; hint: filled ? "Quitar guardado" : "Guardar artículo"; onClicked: backend.toggle_saved(card.modelData.link) }
+                                IconAction { kind: card.modelData.downloaded ? "delete" : "download"; filled: card.modelData.downloaded; enabled: !card.modelData.downloading; hint: filled ? "Eliminar descarga" : "Descargar para leer sin conexión"; onClicked: backend.toggle_download(card.modelData.link) }
                             }
+                    HoverHandler { id: card_hover }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; acceptedButtons: Qt.LeftButton | Qt.RightButton; onClicked: mouse => { if (mouse.button === Qt.RightButton) article_menu.popup(); else {window.feed_scroll=feed_scroll_view.contentY;backend.open_article(card.modelData.link);} } }
+                    Menu {
+                        id: article_menu
+                        property var entry: window.source_for(card.modelData.source_url)
+                        MenuItem { text: "Convertir fuente en atajo web (sin noticias)"; enabled: !!article_menu.entry; onTriggered: backend.set_source_shortcut(article_menu.entry.cat.index, article_menu.entry.src.index, "only") }
+                        MenuItem { text: "Añadir fuente a atajos web (con noticias)"; enabled: !!article_menu.entry; onTriggered: backend.set_source_shortcut(article_menu.entry.cat.index, article_menu.entry.src.index, "add") }
+                        MenuItem { text: "Ir a administrar fuente…"; enabled: !!article_menu.entry; onTriggered: window.manage_category(article_menu.entry.cat, article_menu.entry.src) }
+                    }
+                    ColumnLayout {
+                        id: card_body; anchors.fill: parent; anchors.margins: 1; spacing: 0
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: feed_scroll_view.columns === 1 ? 200 : 150; color: p.hover; clip: true
+                            Image { anchors.fill: parent; source: card.modelData.image; sourceSize.width: Math.ceil(width * 2); sourceSize.height: Math.ceil(height * 2); fillMode: Image.PreserveAspectCrop; asynchronous: true; smooth: true; mipmap: true }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 12; spacing: 8
+                            RadarBadge { article: card.modelData }
+                            RowLayout { Layout.fillWidth: true
+                                Label { text: card.modelData.source; color: p.accent; font.bold: true; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Label { text: card.modelData.date; color: p.muted; font.pixelSize: 10 }
+                            }
+                            Label { text: "WEB · Publicación extraída"; visible: !!card.modelData.web_extracted; color: p.accent; font.pixelSize: 10; Layout.fillWidth: true }
+                            Text { text: card.modelData.title_html; Layout.maximumHeight: font.pixelSize * 5; clip: true; textFormat: Text.RichText; color: card.modelData.seen || card.modelData.dismissed ? p.muted : p.text; font.pixelSize: feed_scroll_view.columns === 1 ? 15 : 13; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            RowLayout { visible: card.modelData.show_translation && card.modelData.translation.length > 0; Layout.fillWidth: true; spacing: 6
+                                Rectangle { width: 16; height: 16; radius: 8; color: "#c9293b"; Layout.alignment: Qt.AlignTop
+                                    Rectangle { anchors.centerIn: parent; width: 15; height: 7; radius: 1; color: "#f6c645" }
+                                }
+                                Text { text: card.modelData.translation_html; Layout.maximumHeight: font.pixelSize * 5; clip: true; textFormat: Text.RichText; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; font.pixelSize: 13 }
+                            }
+                            Action { visible: s.page === "retirados"; text: "Recuperar historial"; active: true; Layout.fillWidth: true; onClicked: backend.restore_history(card.modelData.link) }
+                            Label { visible: card.modelData.dismissed; text: "Descartado · No me interesa"; color: p.muted; font.bold: true; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            Item { Layout.fillHeight: true; Layout.minimumHeight: 0 }
+                            Item { Layout.fillWidth: true; Layout.preferredHeight: 34 }
                         }
                     }
                 }
@@ -632,28 +665,98 @@ ApplicationWindow {
             property string selected_quote: ""
             ColumnLayout {
                 id: reader_content
-                width: reader_scroll.availableWidth; spacing: 12
-                Action { text: "← Volver al feed"; Layout.leftMargin: 16; Layout.topMargin: 12; onClicked: backend.close_article() }
-                RowLayout { Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                width: window.reading_mode ? Math.min(960, reader_scroll.availableWidth) : reader_scroll.availableWidth
+                x: (reader_scroll.availableWidth - width) / 2; spacing: 12
+                RowLayout {
+                    visible: !window.reading_mode; Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 12
+                    Action { text: "← Volver al feed"; onClicked: backend.close_article() }
+                    Item { Layout.fillWidth: true }
+                    Action { objectName: "enterReadingMode"; text: "⛶ Modo lectura"; onClicked: window.enter_reading_mode() }
+                }
+                RowLayout { objectName: "readerToolbar"; visible: !window.reading_mode; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
                     Search { id: body_search; objectName: "body_search"; placeholderText: "Buscar en artículo"; Layout.fillWidth: true; Layout.minimumWidth: 80; onTextEdited: backend.search_document(text); onAccepted: backend.next_match() }
                     Action { text: s.reader.translating ? "Traduciendo…" : s.reader.translated ? "Ver original" : "Leer en español"; active: true; enabled: s.reader.ready && !s.reader.translating; onClicked: backend.translate_article() }
+                    Action {
+                        text: "Aa"; objectName: "readerFontButton"
+                        ToolTip.visible: hovered; ToolTip.text: "Tamaño de letra"
+                        onClicked: font_menu.open()
+                        Menu {
+                            id: font_menu
+                            Repeater {
+                                model: [14, 16, 20, 24]
+                                MenuItem {
+                                    required property int modelData
+                                    text: ["Pequeña", "Mediana", "Grande", "Muy grande"][[14,16,20,24].indexOf(modelData)]
+                                    font.pixelSize: modelData
+                                    checkable: true; checked: s.reader.font_size === modelData
+                                    onTriggered: backend.set_reader_font_size(modelData, false)
+                                }
+                            }
+                        }
+                    }
                     Action { text: "Abrir original ↗"; onClicked: backend.open_url(s.reader.link) }
                 }
                 Image { source: s.reader.image || ""; visible: s.reader.show_image && source.toString().length > 0; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; Layout.preferredHeight: visible ? Math.min(280,width*9/16) : 0; fillMode: Image.PreserveAspectCrop; clip: true; smooth: true; mipmap: true }
-                RowLayout { Layout.leftMargin: 18; Layout.rightMargin: 18; Layout.fillWidth: true
+                RowLayout { visible: !window.reading_mode; Layout.leftMargin: 18; Layout.rightMargin: 18; Layout.fillWidth: true
                     IconAction { kind: "dismiss"; stateActive: !!s.reader.dismissed; hint: s.reader.dismissed ? "Deshacer descarte" : "No me interesa · Volver al feed"; onClicked: backend.toggle_dismissed(s.reader.link) }
-                    IconAction { kind: "archive"; stateActive: !!s.reader.archived; hint: s.reader.archived ? "Restaurar al feed" : "Archivar artículo"; onClicked: backend.toggle_archived(s.reader.link) }
+                    IconAction { kind: "archive"; stateActive: !!s.reader.archived; hint: s.reader.archived ? "Quitar de Archivados" : "Archivar artículo"; onClicked: backend.toggle_archived(s.reader.link) }
                     IconAction { kind: "save"; filled: !!s.reader.saved; hint: filled ? "Quitar guardado" : "Guardar"; onClicked: backend.toggle_saved(s.reader.link) }
                     IconAction { kind: s.reader.downloaded ? "delete" : "download"; filled: !!s.reader.downloaded; enabled: !s.reader.downloading; hint: filled ? "Eliminar descarga" : "Descargar"; onClicked: backend.toggle_download(s.reader.link) }
                     RadarBadge { objectName: "readerRadarBadge"; article: s.reader; visible: s.radar; Layout.minimumWidth: 100 }
                 }
-                Action { text: "Colecciones"; visible: s.reader.saved; compact: true; Layout.leftMargin: 18; onClicked: { article_collections.article_link=s.reader.link; article_collections.open(); } }
+                Action { text: "Colecciones"; visible: s.reader.saved && !window.reading_mode; compact: true; Layout.leftMargin: 18; onClicked: { article_collections.article_link=s.reader.link; article_collections.open(); } }
+                Label { text: "WEB · Publicación extraída del sitio"; visible: !!s.reader.web_extracted; color: p.accent; Layout.leftMargin: 22 }
                 SectionTitle { text: s.reader.title || ""; font.pixelSize: 23; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
-                Label { text: (reader_scroll.marking ? reader_scroll.erasing ? "Borrador activo · Haz clic o arrastra para quitar bloques destacados completos. " : "Destacador activo · Arrastra para pintar; repasar conserva el destacado. " : "") + (s.reader.status || ""); color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
+                Label { visible: !window.reading_mode || reader_scroll.marking || !s.reader.ready; text: (reader_scroll.marking ? reader_scroll.erasing ? "Borrador activo · Haz clic o arrastra para quitar bloques destacados completos. " : "Destacador activo · Arrastra para pintar; repasar conserva el destacado. " : "") + (s.reader.status || ""); color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
                 TextEdit {
-                    id: article_text; objectName: "article_text"; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; Layout.bottomMargin: 28
+                    id: article_text; objectName: "article_text"; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22
+                    Layout.bottomMargin: 28
+                    Layout.preferredHeight: Math.max(contentHeight, images_bottom)
+                    property var image_entries: s.reader.inline_images || []
+                    property var image_layout: []
+                    property real images_bottom: image_layout.reduce((bottom, entry) => Math.max(bottom, entry.y + entry.height + 12), 0)
+                    function update_image_layout() {
+                        const next = backend.reader_image_layout(textDocument);
+                        const unchanged = next.length === image_layout.length && next.every((entry, i) => {
+                            const previous = image_layout[i];
+                            return entry.y === previous.y && entry.x === previous.x
+                                && entry.width === previous.width && entry.height === previous.height
+                                && entry.position === previous.position
+                                && entry.stack === previous.stack && entry.source === previous.source
+                                && entry.alt === previous.alt;
+                        });
+                        if (!unchanged) image_layout = next;
+                    }
+                    // Coalesce changes and measure after Qt has reflowed the text.
+                    onImage_entriesChanged: Qt.callLater(update_image_layout)
+                    onContentHeightChanged: Qt.callLater(update_image_layout)
+                    onWidthChanged: Qt.callLater(update_image_layout)
+                    onFontChanged: Qt.callLater(update_image_layout)
+                    Connections {
+                        target: backend
+                        function onDocument_layout_changed() { Qt.callLater(article_text.update_image_layout); }
+                    }
                     text: s.reader.body || ""; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: !reader_scroll.marking; persistentSelection: true
-                    wrapMode: TextEdit.Wrap; color: p.text; font.pixelSize: 16; selectionColor: p.accent; selectedTextColor: p.accent_text
+                    wrapMode: TextEdit.Wrap; color: p.text; font.pixelSize: s.reader.font_size || 16; selectionColor: p.accent; selectedTextColor: p.accent_text
+                    Repeater {
+                        model: article_text.image_layout
+                        delegate: Image {
+                            objectName: "inlineArticleImage"
+                            required property var modelData
+                            x: modelData.x; y: modelData.y
+                            width: modelData.width; height: modelData.height
+                            source: modelData.source; fillMode: Image.PreserveAspectFit
+                            asynchronous: true; smooth: true; mipmap: true
+                            Accessible.name: modelData.alt || "Imagen del artículo"
+                            z: 2
+                            MouseArea {
+                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                                onClicked: image_viewer.show_image(parent.source, parent.Accessible.name)
+                                ToolTip.visible: containsMouse; ToolTip.delay: 600
+                                ToolTip.text: "Clic para ampliar"
+                            }
+                        }
+                    }
                     property string attached_text: ""
                     property string document_identity: (s.reader.link || "") + (s.reader.translated ? "|es" : "|original")
                     onDocument_identityChanged: Qt.callLater(function(){backend.attach_document(article_text.textDocument);})
@@ -663,7 +766,10 @@ ApplicationWindow {
                             Qt.callLater(function(){backend.attach_document(article_text.textDocument); body_search.text="";});
                         }
                     }
-                    Component.onCompleted: backend.attach_document(textDocument)
+                    Component.onCompleted: {
+                        backend.attach_document(textDocument);
+                        Qt.callLater(update_image_layout);
+                    }
                     MouseArea {
                         objectName: "markerArea"
                         anchors.fill: parent; enabled: reader_scroll.marking; acceptedButtons: Qt.LeftButton; cursorShape: Qt.PointingHandCursor
@@ -700,6 +806,13 @@ ApplicationWindow {
                     }
                     Menu {
                         id: article_menu; objectName: "readerContextMenu"
+                        MenuItem {
+                            objectName: "copyArticleText"
+                            text: "Copiar texto"
+                            enabled: article_text.selectionEnd > article_text.selectionStart
+                            onTriggered: article_text.copy()
+                        }
+                        MenuSeparator {}
                         MenuItem { text: "Guardar punto de lectura aquí"; onTriggered: backend.save_reading_position(reader_scroll.menu_position) }
                         MenuItem { text: "Crear imagen de la cita…"; enabled: reader_scroll.selected_quote.length > 0; onTriggered: {backend.prepare_quote(reader_scroll.selected_quote);if(reader_scroll.selected_quote.length<=500)quote_dialog.open();} }
                         Menu {
@@ -734,7 +847,7 @@ ApplicationWindow {
                     }
                 }
                 Action {
-                    objectName: "readerReadAction"
+                    objectName: "readerReadAction"; visible: !window.reading_mode
                     text: s.reader.seen ? "Marcar como no leído" : "Marcar como leído"
                     symbol: "read"; active: true
                     enabled: s.reader.ready
@@ -749,7 +862,7 @@ ApplicationWindow {
                     search_count.text = body_search.text.length ? count + " coincidencias" : "";
                 }
             }
-            Label { id: search_count; color: p.muted; font.pixelSize: 10; anchors.right: parent.right; anchors.top: parent.top }
+            Label { id: search_count; visible: !window.reading_mode; color: p.muted; font.pixelSize: 10; anchors.right: parent.right; anchors.top: parent.top }
         }
     }
 
@@ -894,6 +1007,15 @@ ApplicationWindow {
         ScrollView { id: design_scroll; clip: true; contentWidth: availableWidth
             ColumnLayout { width: design_scroll.availableWidth; spacing: 16
                 SectionTitle { text: "Diseño"; Layout.margins: 18 }
+                RowLayout { Layout.leftMargin: 18
+                    Label { text: "Tamaño de letra predeterminado"; color: p.text }
+                    ComboBox {
+                        objectName: "defaultReaderFontSize"
+                        model: ["Pequeña · 14", "Mediana · 16", "Grande · 20", "Muy grande · 24"]
+                        currentIndex: [14,16,20,24].indexOf(s.default_font_size)
+                        onActivated: backend.set_reader_font_size([14,16,20,24][currentIndex], true)
+                    }
+                }
                 Check { text: "Mostrar imágenes dentro de los artículos"; checked: s.show_images; Layout.leftMargin: 18; onClicked: backend.set_design(s.columns,checked,s.translate_titles) }
                 Check { text: "Mostrar traducción de los títulos"; checked: s.translate_titles; Layout.leftMargin: 18; onClicked: backend.set_design(s.columns,s.show_images,checked) }
                 RowLayout { Layout.leftMargin: 18
@@ -1178,6 +1300,7 @@ ApplicationWindow {
                 Check { id: src_show_shortcut; text: "Mostrar atajo en la barra superior"; Layout.fillWidth: true }
                 Check { id: src_shortcut; text: "Solo sitio web (sin cargar artículos)"; Layout.fillWidth: true }
                 Search { visible: !src_shortcut.checked; id: src_feed; placeholderText: "URL RSS (opcional, se detecta al actualizar)"; Layout.fillWidth: true }
+                Label { visible: !src_shortcut.checked; text: "Sin RSS, se intentarán extraer las publicaciones de esta página. Usa la dirección del blog o sección de noticias. Se identificarán con la etiqueta WEB."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 ComboBox { id: src_category; model: s.categories; textRole: "name"; Layout.fillWidth: true; implicitHeight: 38
                     background: Rectangle { radius: 8; color: p.hover; border.color: src_category.activeFocus ? p.accent : p.border }
                     contentItem: Text { text: src_category.displayText; color: p.text; leftPadding: 12; rightPadding: 28; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
@@ -1209,6 +1332,46 @@ ApplicationWindow {
             }
         }
     }
+    Dialog {
+        id: image_viewer; objectName: "articleImageViewer"
+        anchors.centerIn: parent; width: window.width - 40; height: window.height - 40
+        modal: true; focus: true; padding: 12
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        property url image_source: ""
+        property string image_description: ""
+        property real zoom: 1
+        function show_image(source, description) {
+            image_source = source; image_description = description; zoom = 1;
+            image_pan.contentX = 0; image_pan.contentY = 0;
+            open();
+        }
+        onClosed: image_source = ""
+        background: Rectangle { color: p.bg; border.color: p.border; radius: 10 }
+        header: RowLayout {
+            spacing: 8
+            Label { text: image_viewer.image_description || "Imagen del artículo"; color: p.text; elide: Text.ElideRight; Layout.fillWidth: true; Layout.margins: 12 }
+            Action { text: "−"; enabled: image_viewer.zoom > 1; onClicked: image_viewer.zoom = Math.max(1, image_viewer.zoom / 1.5); Accessible.name: "Reducir imagen" }
+            Action { text: "Ajustar"; onClicked: { image_viewer.zoom = 1; image_pan.contentX = 0; image_pan.contentY = 0; } }
+            Action { text: "+"; objectName: "enlargeArticleImage"; enabled: image_viewer.zoom < 4; onClicked: image_viewer.zoom = Math.min(4, image_viewer.zoom * 1.5); Accessible.name: "Ampliar imagen" }
+            Action { text: "Cerrar ×"; objectName: "closeArticleImage"; Layout.rightMargin: 12; onClicked: image_viewer.close() }
+        }
+        contentItem: Flickable {
+            id: image_pan; clip: true; boundsBehavior: Flickable.StopAtBounds
+            contentWidth: Math.max(width, enlarged_image.width)
+            contentHeight: Math.max(height, enlarged_image.height)
+            ScrollBar.horizontal: ScrollBar {}
+            ScrollBar.vertical: ScrollBar {}
+            Image {
+                id: enlarged_image; objectName: "enlargedArticleImage"
+                anchors.centerIn: parent; source: image_viewer.image_source
+                property real ratio: implicitWidth / Math.max(1, implicitHeight)
+                width: Math.min(image_pan.width, image_pan.height * ratio) * image_viewer.zoom
+                height: width / Math.max(0.001, ratio)
+                fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true; mipmap: true
+            }
+        }
+    }
+
     FileDialog { id: category_icon_file; title: "Icono de la categoría"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp *.svg *.ico)"]; onAccepted: category_dialog.icon_url = selectedFile.toString() }
     FileDialog { id: icon_file; title: "Icono de la fuente"; nameFilters: ["Imágenes (*.png *.jpg *.jpeg *.webp)"]; onAccepted: source_dialog.icon_url=selectedFile.toString() }
 
@@ -1221,9 +1384,11 @@ ApplicationWindow {
         palette.base: "#ffffff"
         palette.highlight: "#62834b"
         palette.highlightedText: "#ffffff"
+        property int background_index: 0
+        property var backgrounds: [{key: "", name: "Según el tema", start: "#171b20", end: "#171b20"}].concat(s.quote_backgrounds || [])
         property bool spanish: false; property bool title_spanish: false; property bool include_image: false; property int color_index: 0
         function regenerate() {quote_delay.restart();}
-        onOpened: {spanish=s.quote_is_translated;title_spanish=s.quote_title_has_translation && spanish;include_image=false;color_index=Math.max(0,s.themes.findIndex(t=>t.key===s.theme));regenerate();}
+        onOpened: {background_index=0;spanish=s.quote_is_translated;title_spanish=s.quote_title_has_translation && spanish;include_image=false;color_index=Math.max(0,s.themes.findIndex(t=>t.key===s.theme));regenerate();}
         background: Rectangle { color: "#dedede"; radius: 12; border.color: "#b4b4b4" }
         header: Label { text: quote_dialog.title; padding: 18; color: "#252525"; font.bold: true; font.pixelSize: 17 }
         contentItem: RowLayout {
@@ -1263,7 +1428,23 @@ ApplicationWindow {
                         Text { anchors.centerIn: parent; text: quote_image_check.checked ? "✓" : ""; color: "#ffffff" }
                     }
                 }
-                Button { text:"Color " + s.themes[quote_dialog.color_index].name; Layout.fillWidth:true; onClicked:{quote_dialog.color_index=(quote_dialog.color_index+1)%s.themes.length;quote_dialog.regenerate();}
+                Label { text: "Fondo de la cita"; color: "#252525" }
+                ComboBox {
+                    objectName: "quoteBackgroundSelector"
+                    Layout.fillWidth: true; model: quote_dialog.backgrounds; textRole: "name"
+                    currentIndex: quote_dialog.background_index
+                    onActivated: { quote_dialog.background_index = currentIndex; quote_dialog.regenerate(); }
+                }
+                Rectangle {
+                    Layout.fillWidth: true; Layout.preferredHeight: 28; radius: 5
+                    visible: quote_dialog.background_index > 0
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0; color: quote_dialog.backgrounds[quote_dialog.background_index].start }
+                        GradientStop { position: 1; color: quote_dialog.backgrounds[quote_dialog.background_index].end }
+                    }
+                }
+                Button { visible: quote_dialog.background_index === 0; text:"Color " + s.themes[quote_dialog.color_index].name; Layout.fillWidth:true; onClicked:{quote_dialog.color_index=(quote_dialog.color_index+1)%s.themes.length;quote_dialog.regenerate();}
                     background:Rectangle { color:s.themes[quote_dialog.color_index].key==="periodico"?"#e6e6e6":"#232a34";radius:6 }
                     contentItem:Text {text:parent.text;color:s.themes[quote_dialog.color_index].color;wrapMode:Text.Wrap;padding:10}
                 }
@@ -1272,7 +1453,7 @@ ApplicationWindow {
             Image { source:s.quote_preview; Layout.fillWidth:true; Layout.fillHeight:true; fillMode:Image.PreserveAspectFit; smooth:true; mipmap:true; cache:false }
         }
         footer: RowLayout { Item {Layout.fillWidth:true} Button {text:"Cancelar";onClicked:quote_dialog.close()} Button {text:"Guardar imagen…";enabled:s.quote_can_save;onClicked:quote_file.open()} Item {width:12} }
-        Timer { id:quote_delay;interval:150;onTriggered:backend.update_quote(quote_dialog.spanish,quote_dialog.include_image,quote_dialog.title_spanish,s.themes[quote_dialog.color_index].key) }
+        Timer { id:quote_delay;interval:150;onTriggered:backend.update_quote(quote_dialog.spanish,quote_dialog.include_image,quote_dialog.title_spanish,s.themes[quote_dialog.color_index].key,quote_dialog.backgrounds[quote_dialog.background_index].key) }
     }
     FileDialog { id: opml_import_file; title: "Importar fuentes y categorías"; nameFilters: ["Fuentes OPML (*.opml *.xml)"]; onAccepted: backend.portability_action("import_opml", selectedFile.toString()) }
     FileDialog { id: opml_export_file; title: "Exportar fuentes y categorías"; fileMode: FileDialog.SaveFile; defaultSuffix: "opml"; nameFilters: ["Fuentes OPML (*.opml)"]; onAccepted: backend.portability_action("export_opml", selectedFile.toString()) }

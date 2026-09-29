@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from PIL import Image
 from choroy_reader.library import Library, find_matches, score_radar
 from . import core
+from .web_source import extract_publications
 from .reader_store import ReaderStore
 from .lifecycle import Lifecycle
 
@@ -42,14 +43,17 @@ class Service:
         self.lifecycle = Lifecycle(self.reader_store)
         self.seen = set(self.config.get('vistos', []))
         self.dismissed = set(self.config.get('descartados', []))
+        if housekeeping:
+            self.initialize_history()
+
+    def initialize_history(self):
         # Seed history from existing installations without touching saved copies.
         for kind in ('feed', 'guardados', 'descargas', 'archivados'):
             for article in self.library.list_items(kind):
                 if not self.library.contains('historial', article['link']):
                     self.remember_article(article)
 
-        if housekeeping:
-            self.cleanup_history()
+        self.cleanup_history()
 
     def cleanup_history(self, now=None):
         now = time.time() if now is None else now
@@ -160,16 +164,15 @@ class Service:
             return ''
         folder = self.root / 'cache' / 'images'
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / (hashlib.sha256(data).hexdigest() + '.png')
+        digest = hashlib.sha256(data).hexdigest()
+        legacy = folder / (digest + '.png')
+        if legacy.exists():
+            return legacy.as_uri()
+        path = folder / (digest + '.img')
         if not path.exists():
-            try:
-                with Image.open(io.BytesIO(data)) as image:
-                    image.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
-                    out = io.BytesIO()
-                    image.convert('RGBA').save(out, 'PNG')
-                path.write_bytes(out.getvalue())
-            except Exception:
-                return ''
+            # Qt decodes images asynchronously at the requested display size.
+            # Avoid decoding/resizing/re-encoding every cover on the UI thread.
+            path.write_bytes(data)
         return path.as_uri()
 
     def fetch_image(self, link, image_url=None):
@@ -240,37 +243,59 @@ class Service:
         if source.get('source_type') == 'shortcut':
             source['sin_feed'] = False
             return source, []
-        feed = source.get('url_feed') or core.discover_feed(source['url'])
+        feed = source.get('url_feed')
+        if not feed and not source.get('extraccion_web'):
+            feed = core.discover_feed(source['url'])
         source['url_feed'] = feed
-        if not feed:
-            # Una portada inaccesible es un error temporal, no ausencia de RSS.
-            core.download(source['url'], timeout=10)
-            source['sin_feed'] = True
-            return source, []
-        source['sin_feed'] = False
-        raw = core.get_articles(feed, maximum=None)
-        if raw is None:
-            raise ValueError('No se pudo descargar el feed')
+        web = not bool(feed)
+        if web:
+            html = core.download(source['url'], timeout=15).decode('utf-8', errors='replace')
+            raw = extract_publications(html, source['url'])
+            source['extraccion_web'] = True
+            source['sin_feed'] = not bool(raw)
+        else:
+            source['extraccion_web'] = False
+            source['sin_feed'] = False
+            raw = core.get_articles(feed, maximum=None)
+            if raw is None:
+                raise ValueError('No se pudo descargar el feed')
         # Un RSS puede seguir respondiendo aunque no tenga publicaciones dentro
         # del período elegido. Conservamos esa señal para no borrar el último
         # snapshot local durante una actualización normal.
         source['feed_empty_after_period'] = bool(raw)
         output = []
-        dated = [(title, link, image, core.parse_date(date)) for title, link, image, date in raw]
+        cached = {article['link']: article for article in self.articles.get(source['url'], [])}
+        detected_dates = {}
+        detected_at = datetime.now().astimezone()
+        dated = []
+        for title, link, image, raw_date in raw:
+            date = core.parse_date(raw_date)
+            if web and date is None:
+                previous = cached.get(link) or self.library.read('historial', link) or {}
+                date = previous.get('fecha') or detected_at
+                detected_dates[link] = previous.get('fecha_detectada', True)
+            dated.append((title, link, image, date))
         dated = [entry for entry in dated if self.in_period(entry[3], config)]
         dated.sort(key=lambda entry: entry[3].timestamp(), reverse=True)
-        unique = {entry[1]: entry for entry in reversed(dated)}
+        unique = {}
+        for entry in dated:
+            unique.setdefault(entry[1], entry)
         dated = sorted(unique.values(), key=lambda entry: entry[3].timestamp(), reverse=True)
         for title, link, image, date in dated[:source.get('limite_articulos', 100)]:
             translate = (config.get('mostrar_titulo_es', True) and source.get('modo_titulo', 'en_es') != 'solo_ingles'
                          and source.get('traduccion_es', True))
-            translated = core.translate_text(title, skip_spanish=True) if translate else ''
+            previous = cached.get(link, {})
+            if translate and previous.get('titulo') == title and previous.get('traducir_es'):
+                translated = previous.get('titulo_es') or ''
+            else:
+                translated = core.translate_text(title, skip_spanish=True) if translate else ''
             if translated and ' '.join(translated.casefold().split()) == ' '.join(title.casefold().split()):
                 translated = ''
             output.append(dict(titulo=title, titulo_es=translated or '', link=link,
-                               imagen=self.fetch_image(link, image), fecha=date,
+                               imagen=previous.get('imagen') or (self.fetch_image(link, image) if image or not web else None), fecha=date,
+                               origen='web' if web else 'rss', fecha_detectada=detected_dates.get(link, False),
                                fuente=source['nombre'], source_url=source['url'], traducir_es=translate))
-        source['feed_empty_after_period'] = bool(raw) and not bool(output)
+        source['feed_empty_after_period'] = (web or bool(raw)) and not bool(output)
         return source, output
 
     def refresh(self, progress=None, cancel=None):
@@ -333,6 +358,7 @@ class Service:
                 if source['url'] in updated:
                     source['url_feed'] = updated[source['url']].get('url_feed')
                     source['sin_feed'] = updated[source['url']].get('sin_feed', False)
+                    source['extraccion_web'] = updated[source['url']].get('extraccion_web', False)
                     source['ultima_actualizacion'] = time.time()
         self.save_config()
         self.cleanup_history()
@@ -371,6 +397,39 @@ class Service:
         return next((a for a in self.all_articles() if a['link'] == link), None) or self.library.read('descargas', link) or self.library.read('guardados', link) or self.library.read('archivados', link) or self.library.read('historial', link) or self.library.read('retirados', link)
 
     def read(self, article, offline=False):
+        result = self._read_text(article, offline)
+        images = result.get('imagenes_cuerpo')
+        if images is None:
+            images = self.reader_store.read_images(result['link'])
+        if images is None and not offline:
+            try:
+                html = core.download(result['link'], timeout=15).decode('utf-8', errors='replace')
+                images = core.article_images(html, result['link'], result['cuerpo'])
+            except Exception:
+                images = None
+        if images is not None:
+            import base64
+            def embed(entry):
+                entry = dict(entry)
+                if 'source' not in entry:
+                    try:
+                        data = core.download(entry['url'], timeout=10)
+                        with Image.open(io.BytesIO(data)) as image:
+                            image.thumbnail((1200, 1200))
+                            out = io.BytesIO()
+                            image.convert('RGB').save(out, 'JPEG', quality=85)
+                        entry['source'] = 'data:image/jpeg;base64,' + base64.b64encode(out.getvalue()).decode('ascii')
+                    except Exception:
+                        pass
+                return entry
+            if not offline:
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    images = list(pool.map(embed, images))
+            result['imagenes_cuerpo'] = images
+            self.reader_store.save_images(result['link'], images)
+        return result
+
+    def _read_text(self, article, offline=False):
         article = dict(article)
         link = article['link']
         local = self.library.read('descargas', link)
@@ -396,6 +455,8 @@ class Service:
             if lang:
                 article['idioma_original'] = lang.group(1).lower()
             text = core.article_text(html)
+            if text:
+                article['imagenes_cuerpo'] = core.article_images(html, link, text)
         except Exception:
             pass
         status = 'Texto extraído del sitio'
@@ -403,6 +464,8 @@ class Service:
             parser = core.HtmlContent()
             parser.feed(core.feed_content.get(link, ''))
             text = parser.text()
+            if text:
+                article['imagenes_cuerpo'] = core.article_images(core.feed_content.get(link, ''), link, text)
             status = 'Contenido del feed · Puede ser un resumen'
         if not text:
             raise ValueError('No se pudo recuperar el texto. Puedes abrir el sitio original.')
@@ -464,7 +527,9 @@ class Service:
     def filtered(self, page='feed', category='', source='', query=''):
         articles = self.library.list_items(page) if page in {'guardados', 'descargas', 'archivados', 'historial', 'retirados'} else self.all_articles()
         if page == 'feed':
-            articles = [a for a in articles if self.in_period(a.get('fecha')) and not self.library.contains('archivados', a['link'])]
+            articles = [a for a in articles if self.in_period(a.get('fecha'))
+                        and not self.library.contains('archivados', a['link'])
+                        and not self.library.contains('guardados', a['link'])]
         if category:
             sources = {s['url'] for c in self.config['categorias'] if c['nombre'] == category for s in c['sitios']}
             articles = [a for a in articles if a.get('source_url') in sources]
@@ -472,7 +537,7 @@ class Service:
             articles = [a for a in articles if a.get('source_url') == source]
         if query:
             articles = [a for a in articles if find_matches(a.get('titulo', '') + ' ' + (a.get('titulo_es') or ''), query)]
-        if self.config.get('radar_activo'):
+        if page != 'guardados' and self.config.get('radar_activo'):
             articles.sort(key=self.score, reverse=True)
         if page == "feed":
             articles.sort(key=lambda article: (article["link"] in self.dismissed, article["link"] in self.seen))

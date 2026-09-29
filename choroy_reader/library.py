@@ -5,6 +5,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import unicodedata
 from pathlib import Path
 from datetime import datetime
@@ -67,7 +68,7 @@ class Library:
         return self.path(kind, link).is_file()
 
     def save(self, kind, article):
-        data = {k: article.get(k) for k in ('titulo', 'titulo_es', 'link', 'fuente', 'cuerpo', 'estado_contenido', 'idioma_original', 'traducir_es', 'source_url')}
+        data = {k: article.get(k) for k in ('origen', 'fecha_detectada', 'titulo', 'titulo_es', 'link', 'fuente', 'cuerpo', 'imagenes_cuerpo', 'estado_contenido', 'idioma_original', 'traducir_es', 'source_url')}
         if not data['link']:
             raise ValueError('Artículo sin enlace')
         if kind == 'descargas' and not data['cuerpo']:
@@ -75,6 +76,9 @@ class Library:
         date = article.get('fecha')
         data['fecha'] = date.isoformat() if isinstance(date, datetime) else date
         data['imagen'] = base64.b64encode(article.get('imagen') or b'').decode()
+        if kind == 'guardados':
+            previous = self.read(kind, data['link'])
+            data['guardado_en'] = previous['guardado_en'] if previous else time.time_ns()
         path = self.path(kind, data['link'])
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = None
@@ -88,7 +92,10 @@ class Library:
                 os.unlink(temporary)
 
     def read_path(self, path):
-        data = json.loads(Path(path).read_text(encoding='utf-8'))
+        path = Path(path)
+        data = json.loads(path.read_text(encoding='utf-8'))
+        if path.parent.name == 'guardados':
+            data.setdefault('guardado_en', path.stat().st_mtime_ns)
         data['imagen'] = base64.b64decode(data.get('imagen') or '') or None
         try:
             data['fecha'] = datetime.fromisoformat(data['fecha']) if data.get('fecha') else None
@@ -110,6 +117,8 @@ class Library:
                 output.append(self.read_path(path))
             except (OSError, ValueError, TypeError):
                 continue
+        if kind == 'guardados':
+            output.sort(key=lambda article: article['guardado_en'], reverse=True)
         return output
 
     def delete(self, kind, link):
