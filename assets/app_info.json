@@ -17,5 +17,10 @@
   ],
   "location": "Santiago de Chile",
   "github": "bastideveloper1",
-  "stage": "Beta"
+  "stage": "Beta",
+  "socials": {
+    "GitHub": "https://github.com/bastideveloper1",
+    "Instagram": "https://www.instagram.com/itsbasti_an/",
+    "Mastodon": "https://infosec.exchange/@YII"
+  }
 }

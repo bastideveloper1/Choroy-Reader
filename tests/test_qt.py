@@ -19,6 +19,148 @@ APP=QGuiApplication.instance() or QGuiApplication([])
 ROOT=Path(__file__).resolve().parent.parent
 
 class QtTests(unittest.TestCase):
+    def test_author_social_links_open_the_requested_profiles(self):
+        root = self.load_qml()
+        self.assertEqual(root.property('font').family(), 'DejaVu Sans')
+        expected = {
+            'GitHub': 'https://github.com/bastideveloper1',
+            'Instagram': 'https://www.instagram.com/itsbasti_an/',
+            'Mastodon': 'https://infosec.exchange/@YII',
+        }
+        with patch('choroy_reader.backend.QDesktopServices.openUrl') as opened:
+            for name, url in expected.items():
+                button = self.visual_item(root, 'social_' + name)
+                self.assertTrue(button.isVisible())
+                QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+                self.assertEqual(opened.call_args.args[0].toString(), url)
+        self.assertIsNone(self.visual_item(root, 'social_X'))
+
+    def test_quote_footer_options_reach_export_renderer(self):
+        from PIL import Image
+        self.backend.reader = dict(self.article)
+        self.backend.prepare_quote('Primera línea')
+        with patch('choroy_reader.core.create_quote_image', return_value=Image.new('RGB', (20, 20))) as render:
+            self.backend.update_quote(False, False, False, 'gris', '', False, False)
+            self.assertFalse(render.call_args.kwargs['show_link'])
+            self.assertIsNone(render.call_args.kwargs['source_icon'])
+            self.backend.update_quote(False, False, False, 'gris', '', True, True)
+            self.assertTrue(render.call_args.kwargs['show_link'])
+            self.assertIsNotNone(render.call_args.kwargs['source_icon'])
+
+    def test_guided_quote_two_parts_counter_and_limit(self):
+        from PySide6.QtCore import Q_ARG
+        self.backend.reader = dict(self.article, cuerpo='A' * 600 + '\n\n' + 'Segundo pasaje')
+        self.backend.reader_body = self.backend.reader['cuerpo']
+        self.backend.publish()
+        root = self.load_qml()
+        reader = root.findChild(QObject, 'reader_page')
+        text = root.findChild(QObject, 'article_text')
+        QMetaObject.invokeMethod(reader, 'begin_quote', Qt.DirectConnection, Q_ARG('QVariant', 2))
+        QMetaObject.invokeMethod(text, 'select', Qt.DirectConnection, Q_ARG(int, 0), Q_ARG(int, 501))
+        APP.processEvents()
+        confirm = self.visual_item(root, 'confirmQuotePart')
+        self.assertFalse(confirm.isEnabled())
+        self.assertIn('-1', self.visual_item(root, 'quoteRemaining').property('text'))
+        QMetaObject.invokeMethod(text, 'select', Qt.DirectConnection, Q_ARG(int, 0), Q_ARG(int, 10))
+        QMetaObject.invokeMethod(reader, 'accept_quote_part', Qt.DirectConnection)
+        QMetaObject.invokeMethod(text, 'select', Qt.DirectConnection, Q_ARG(int, 602), Q_ARG(int, 616))
+        QMetaObject.invokeMethod(reader, 'accept_quote_part', Qt.DirectConnection)
+        self.assertEqual(self.backend.quote_data['text'], 'A' * 10 + '\n\n[…]\n\nSegundo pasaje')
+        self.assertEqual(reader.property('quote_parts_target'), 0)
+
+    def test_reference_palette_and_collapsible_shortcuts_below_categories(self):
+        self.service.config['categorias'][0]['sitios'][0]['show_shortcut'] = True
+        self.backend.publish()
+        root = self.load_qml()
+        toggle = self.visual_item(root, 'shortcutsToggle')
+        self.assertFalse(self.visual_item(root, 'shortcutsPanel').isVisible())
+        QMetaObject.invokeMethod(toggle, 'clicked', Qt.DirectConnection)
+        QTest.qWait(80)
+        self.assertTrue(self.visual_item(root, 'shortcutsPanel').isVisible())
+        shortcut = self.visual_item(root, 'shortcut_Fuente')
+        category = self.visual_item(root, 'category_Tech')
+        self.assertGreater(shortcut.mapToScene(QPoint(0, 0)).y(), category.mapToScene(QPoint(0, 0)).y())
+        forest = self.visual_item(root, 'forestNavigation')
+        self.assertTrue(forest.property('favicon').endswith('bosqueicon.png'))
+        for theme, background, panel, card in [('gris', '#0C0E0F', '#121516', '#191C1E'), ('periodico', '#F5F6F4', '#ECEEEB', '#FFFFFF')]:
+            self.backend.set_theme(theme)
+            palette = self.backend.state['palette']
+            self.assertEqual((palette['bg'], palette['panel'], palette['card']), (background, panel, card))
+
+    def test_forest_moods_reverse_discards_and_keep_empty_neutral(self):
+        self.service.config['categorias'][0]['sitios'].append(dict(nombre='Segunda', url='https://second.example'))
+        for kind in ('saved', 'dismissed'):
+            self.service.forest.record(self.article, kind)
+        self.backend.forest_filter('', 'saved')
+        self.backend.navigate('forest', '', '')
+        root = self.load_qml()
+        self.assertEqual(self.visual_item(root, 'forestMood_saved').property('text'), '😄')
+        self.assertEqual(self.visual_item(root, 'forestMood_dismissed').property('text'), '😴')
+        self.assertEqual(self.visual_item(root, 'forestMood_opened').property('text'), '😐')
+        QMetaObject.invokeMethod(self.visual_item(root, 'forestNext'), 'clicked', Qt.DirectConnection)
+        APP.processEvents()
+        self.assertEqual(self.visual_item(root, 'forestMood_saved').property('text'), '😴')
+        self.assertEqual(self.visual_item(root, 'forestMood_dismissed').property('text'), '😄')
+
+    def test_forest_fullscreen_intro_cards_and_exit(self):
+        root = self.load_qml()
+        visibility = root.visibility()
+        self.backend.navigate('forest', '', '')
+        QTest.qWait(150)
+        self.assertEqual(root.visibility(), QQuickWindow.FullScreen)
+        intro = self.visual_item(root, 'forestIntro')
+        self.assertTrue(intro.isVisible())
+        self.assertIsNotNone(self.visual_item(root, 'forestSourceIcon'))
+        self.assertGreaterEqual(self.visual_item(root, 'forestMetrics').property('columns'), 2)
+        self.assertLessEqual(self.visual_item(root, 'forestSort').width(), 240)
+        QTest.qWait(3100)
+        self.assertTrue(intro.isVisible())
+        intro_image = self.visual_item(root, 'forestIntroImage')
+        self.backend.set_theme('periodico')
+        APP.processEvents()
+        self.assertTrue(intro_image.property('source').toString().endswith('choroybosque.png'))
+        self.backend.set_theme('gris')
+        APP.processEvents()
+        self.assertTrue(intro_image.property('source').toString().endswith('choroybosquenoche.png'))
+        QMetaObject.invokeMethod(self.visual_item(root, 'forestIntroStart'), 'clicked', Qt.DirectConnection)
+        QTest.qWait(750)
+        self.assertFalse(intro.isVisible())
+        self.backend.navigate('feed', '', '')
+        APP.processEvents()
+        self.assertEqual(root.visibility(), visibility)
+
+    def test_forest_guided_navigation_and_compact_settings(self):
+        self.service.config['categorias'][0]['sitios'].append(dict(nombre='Segunda', url='https://second.example'))
+        self.backend.navigate('forest', '', '')
+        root = self.load_qml()
+        name = self.visual_item(root, 'forestSourceName')
+        first = name.property('text')
+        button = self.visual_item(root, 'forestNext')
+        QMetaObject.invokeMethod(button, 'clicked', Qt.DirectConnection)
+        APP.processEvents()
+        self.assertNotEqual(name.property('text'), first)
+        self.backend.navigate('sources', '', '')
+        QTest.qWait(200)
+        period = self.visual_item(root, 'articlePeriodSelector')
+        history = self.visual_item(root, 'historyRetentionSelector')
+        self.assertLessEqual(period.width(), 220)
+        self.assertLessEqual(history.width(), 220)
+        self.assertAlmostEqual(period.mapToScene(QPoint(0,0)).y(), history.mapToScene(QPoint(0,0)).y(), delta=2)
+
+    def test_forest_page_and_actions_preserve_saved_articles(self):
+        self.backend.toggle_saved(self.article['link'])
+        self.backend.toggle_dismissed(self.article['link'])
+        self.backend.navigate('forest', '', '')
+        root = self.load_qml()
+        self.assertIsNotNone(self.visual_item(root, 'forestList'))
+        row = self.backend.state['forest']['rows'][0]
+        self.assertEqual((row['saved'], row['dismissed']), (1, 1))
+        self.backend.forest_action(row['url'], 'later')
+        self.assertEqual(self.backend.state['forest']['pending'], 0)
+        self.backend.forest_action(row['url'], 'delete')
+        self.assertEqual(self.backend.state['forest']['rows'], [])
+        self.assertTrue(self.service.library.contains('guardados', self.article['link']))
+
     def test_mouse_back_returns_from_reader_then_previous_section(self):
         root = self.load_qml()
         self.backend.navigate('guardados', '', '')
@@ -155,6 +297,45 @@ class QtTests(unittest.TestCase):
         grid.setProperty('contentY', 4600)
         QTest.qWait(100)
         self.assertLess(len(live_cards()), 40)
+
+    def test_feed_actions_preserve_scrolled_row(self):
+        self.service.articles['https://example.com'] = [
+            dict(self.article, link=f'https://example.com/{i}') for i in range(150)]
+        self.backend.publish()
+        root = self.load_qml()
+        grid = root.findChild(QQuickItem, 'feedGrid')
+        grid.setProperty('contentY', 1800)
+        QTest.qWait(100)
+        for action in (self.backend.toggle_dismissed, self.backend.toggle_read,
+                       self.backend.toggle_saved, self.backend.toggle_archived):
+            with self.subTest(action=action.__name__):
+                grid.setProperty('contentY', 1800)
+                QTest.qWait(50)
+                offset = grid.property('contentY')
+                row = int(offset / grid.property('cellHeight')) * grid.property('columns')
+                link = self.backend.article_model.items[row]['link']
+                action(link)
+                QTest.qWait(100)
+                self.assertAlmostEqual(grid.property('contentY'), offset, delta=1)
+        self.backend.navigate('guardados')
+        QTest.qWait(100)
+        self.assertAlmostEqual(grid.property('contentY'), 0, delta=1)
+
+    def test_feed_scroll_clamps_when_last_row_is_removed(self):
+        self.service.articles['https://example.com'] = [
+            dict(self.article, link=f'https://example.com/{i}') for i in range(80)]
+        self.backend.publish()
+        root = self.load_qml()
+        grid = root.findChild(QQuickItem, 'feedGrid')
+        grid.setProperty('contentY', grid.property('contentHeight') - grid.height())
+        QTest.qWait(100)
+        # Remove enough cards to shrink the scrollable area by a full row.
+        for article in list(self.backend.article_model.items[-grid.property('columns'):]):
+            self.backend.toggle_archived(article['link'])
+        QTest.qWait(100)
+        self.assertGreater(grid.property('contentY'), 0)
+        self.assertAlmostEqual(grid.property('contentY'),
+                               grid.property('contentHeight') - grid.height(), delta=1)
 
     def test_startup_reuses_feed_without_refresh_or_storage_scan(self):
         with patch.object(self.service, 'storage_report', side_effect=AssertionError('Storage scan on startup')):
@@ -423,6 +604,8 @@ class QtTests(unittest.TestCase):
             QTest.qWait(100)
         drag('category_Tech', 'category_Other')
         self.assertEqual([c['nombre'] for c in self.service.config['categorias']], ['Other', 'Tech'])
+        QMetaObject.invokeMethod(self.visual_item(root, 'shortcutsToggle'), 'clicked', Qt.DirectConnection)
+        QTest.qWait(80)
         drag('shortcut_Second', 'shortcut_Fuente')
         self.assertEqual([s['name'] for s in self.backend.state['link_sources']], ['Fuente', 'Second'])
         persisted = Service(self.tmp.name).config
@@ -617,12 +800,14 @@ class QtTests(unittest.TestCase):
                     self.assertEqual(len(self.backend.state['link_sources']), int(expected))
                     self.assertEqual(len(self.backend.state['categories'][0]['sources']), 1)
 
-    def test_navigation_and_feed_toolbar_align(self):
+    def test_navigation_brand_and_feed_toolbar_layout(self):
         root = self.load_qml()
         navigation = root.findChild(QQuickItem, 'articlesNavigation')
         refresh = root.findChild(QQuickItem, 'refreshFeedButton')
-        self.assertEqual(navigation.mapToScene(QPoint(0, 0)).y(),
-                         refresh.mapToScene(QPoint(0, 0)).y())
+        logo = root.findChild(QQuickItem, 'appLogo')
+        self.assertLess(logo.mapToScene(QPoint(0, 0)).y(), navigation.mapToScene(QPoint(0, 0)).y())
+        category = self.visual_item(root, 'category_Tech')
+        self.assertGreater(category.mapToScene(QPoint(0, 0)).y(), refresh.mapToScene(QPoint(0, 0)).y())
         self.assertEqual(navigation.height(), refresh.height())
         self.assertEqual(navigation.property('topInset'), refresh.property('topInset'))
 
@@ -1326,12 +1511,14 @@ class QtTests(unittest.TestCase):
     def test_qml_pages_logo_and_reader(self):
         root=self.load_qml()
         panel=root.findChild(QQuickItem,'sidebarPanel')
-        toggle=root.findChild(QQuickItem,'sidebarToggle')
+        toggle=root.findChild(QQuickItem,'sidebarHide')
         self.assertTrue(panel.isVisible())
         point=toggle.mapToScene(toggle.boundingRect().center()).toPoint()
         QTest.mouseClick(root,Qt.LeftButton,Qt.NoModifier,point)
         QTest.qWait(30)
         self.assertFalse(panel.isVisible())
+        toggle=root.findChild(QQuickItem,'sidebarToggle')
+        point=toggle.mapToScene(toggle.boundingRect().center()).toPoint()
         QTest.mouseClick(root,Qt.LeftButton,Qt.NoModifier,point)
         QTest.qWait(30)
         self.assertTrue(panel.isVisible())

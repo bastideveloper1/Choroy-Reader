@@ -95,15 +95,25 @@ Construir en Windows con un entorno virtual propio, instalar
 `requirements_build.txt` y ejecutar:
 
 ```powershell
-.venv\Scripts\python.exe -m PyInstaller --noconfirm packaging/choroy_reader.spec
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements_build.txt
+powershell -ExecutionPolicy Bypass -File packaging/build_windows.ps1
 ```
 
-Después compilar `packaging/windows.iss` con Inno Setup para crear el asistente
-`Choroy Reader-Setup-0.1.0.exe`. Esta receta aún requiere validación en Windows,
-incluyendo fuentes tipográficas de las citas y directorios de datos.
+El script requiere Inno Setup 6 y crea `dist/Choroy-Reader-Setup-0.1.1-x64.exe`
+y su SHA-256. El asistente incluye bienvenida, icono y arte del bosque, idiomas
+español/inglés y acceso directo opcional. Instala por usuario sin pedir permisos
+de administrador y conserva la biblioteca al actualizar. Construcción para
+Windows x64; las comprobaciones bajo Wine no sustituyen las de Windows nativo.
+Requiere Windows 10 1809 o posterior, conforme a
+[las plataformas admitidas por Qt](https://doc.qt.io/qt-6/windows.html).
 
 Herramientas: [PyInstaller](https://pyinstaller.org/en/stable/usage.html).
 No se incluye distribución Android.
+
+Cambios de esta segunda versión: [0.1.1](docs/release-0.1.1.md).
+Protecciones y límites de red/contenido: [privacidad](docs/privacy.md).
+Comprobación completa: `python packaging/check_release.py`.
 
 
 ## Destacados y lectura sin conexión
@@ -202,3 +212,71 @@ antes de instalar el nuevo paquete; tu biblioteca y preferencias se conservan.
 
 La versión 0.1.1 incorpora esta función. Quienes tengan 0.1.0 deben descargar e
 instalar 0.1.1 manualmente para poder consultar las siguientes actualizaciones.
+
+### El Bosque: revisión de fuentes
+
+Abre **El Bosque** desde la barra lateral. Permite comparar fuentes por mes o
+por todo el historial registrado, ordenar por actividad y uso, y decidir cuáles
+conservar. Los datos se guardan localmente en SQLite y viajan en la copia de
+seguridad; no se envían a servicios de métricas.
+
+Cada cifra cuenta **artículos distintos** por fuente, acción y período: recibidos,
+abiertos, destacados, favoritos añadidos manualmente, citas exportadas y marcados
+«No me interesa». Repetir una acción sobre el mismo artículo en el mismo mes no
+incrementa el contador. El histórico cuenta artículos únicos, no la suma de los
+meses. Deshacer una acción no borra que ocurrió. Una cita exportada no implica
+que se haya publicado en una red social.
+
+El registro empieza al incorporar esta función, sin inventar actividad anterior.
+«Recibidos» mide artículos nuevos detectados al actualizar, condicionado por los
+períodos y límites de las fuentes; no mide toda su producción real. Radar muestra
+artículos evaluados y coincidencias observadas durante actualizaciones, usando
+los intereses y equivalencias configurados entonces. Si no hay intereses no se
+evalúa; «Sin evaluar» es diferente de cero coincidencias. Cambiar intereses no
+reescribe las métricas anteriores. Los atajos web no se incluyen como fuentes.
+
+**Conservar** marca la revisión como hecha y propone volver en 30 días.
+**Posponer** aplaza 30 días la revisión sin detener la recepción de artículos.
+**Revisar ahora** vuelve a marcarla pendiente. Al vencer el plazo vuelve a aparecer
+pendiente al abrir El Bosque o reiniciar la aplicación. **Eliminar fuente** pide
+confirmación y la quita de todas sus categorías, conservando los artículos de la
+biblioteca y las métricas. Las fuentes eliminadas dejan de aparecer en la lista;
+si se añade nuevamente la misma URL se recuperan sus estadísticas.
+
+El Bosque se abre en pantalla completa con una bienvenida ilustrada que permanece hasta
+que pulses **Haz clic para entrar en El Bosque**, hagas clic en el fondo o uses Escape. Las métricas se presentan en tarjetas junto al promedio
+del período y la fuente aparece con su favicon (o su inicial si no está disponible).
+**Salir de El Bosque** restaura el tamaño anterior de la ventana. Escape durante
+la revisión también permite salir.
+
+La bienvenida usa `choroybosque.png` en el tema claro y `choroybosquenoche.png`
+en los oscuros, con las mismas dimensiones. Cada métrica muestra una carita:
+😄 para actividad favorable respecto del promedio, 😴 para desfavorable y
+😐 dentro del ±20 % del promedio o cuando no hay actividad para comparar.
+El emoji lleva un fondo verde (favorable), rojo (desfavorable) o azul (neutral),
+adaptado al tema claro u oscuro. En «No me interesa» la valoración se invierte: menos descartes es favorable.
+Al pasar el cursor sobre la carita se explica la comparación; es una referencia
+de actividad, no una evaluación automática de calidad de la fuente.
+
+### Navegación y aspecto
+
+La identidad de Choroy Reader aparece en la cabecera de la barra lateral.
+**El Bosque** y **Gestionar fuentes** están agrupados en **Fuentes**; El Bosque
+usa `assets/bosqueicon.png`. En el feed, los atajos fijados aparecen encima de
+las categorías horizontales. Selecciona una categoría para ver sus fuentes;
+el clic derecho permite administrarlas y se conserva el arrastre para reordenar.
+Los temas claro y oscuro comparten los verdes de Choroy y usan superficies,
+bordes y textos adaptados al contraste de cada fondo.
+
+Para preparar una cita, el menú de clic derecho del artículo permite elegir
+**Cita en una parte** o **Cita en dos partes** antes de seleccionar. Arrastra sobre
+el texto: el panel muestra los caracteres disponibles en tiempo real. En dos
+partes, pulsa **Guardar primera parte**, desplázate y selecciona el segundo
+pasaje; **Crear imagen** los une en orden de lectura con `[…]`. El límite total
+es de 500 caracteres, incluido el separador; los pasajes no pueden superponerse.
+Puedes cancelar o volver a seleccionar si excedes el límite. La selección se
+reinicia al cambiar de artículo o idioma.
+
+En el editor de citas, **Mostrar enlace** y **Mostrar icono de la web** son
+independientes. El enlace está oculto inicialmente; el icono se muestra si está
+disponible. **Copiar enlace** sigue disponible aunque no aparezca en la imagen.

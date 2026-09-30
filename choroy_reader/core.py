@@ -2,7 +2,6 @@
 import io
 import re
 import json
-import gzip
 import time
 import textwrap
 import urllib.request
@@ -286,29 +285,7 @@ DEFAULT_CONFIG = {
     "vistos": [],
 }
 
-def download(url, timeout=10):
-
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0 Safari/537.36"
-            ),
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9,es;q=0.8"
-        }
-    )
-
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-
-        data = response.read()
-
-        if response.info().get("Content-Encoding") == "gzip":
-            data = gzip.decompress(data)
-
-        return data
+from .network import download
 
 NS_MEDIA = "{http://search.yahoo.com/mrss/}"
 
@@ -593,6 +570,7 @@ def relative_date(date):
     return date.strftime("%d %b %Y")
 
 QUOTE_BACKGROUNDS = [
+    dict(key="choroy", name="Choroy · Verde y rojo", start="#078A5B", end="#A41632", light=False),
     dict(key="marfil", name="Marfil", start="#fff7e8", end="#fff7e8", light=True),
     dict(key="salvia", name="Salvia", start="#e0ecdf", end="#e0ecdf", light=True),
     dict(key="lavanda", name="Lavanda", start="#eee5f6", end="#eee5f6", light=True),
@@ -618,7 +596,7 @@ def quote_background(size, preset):
     return strip.resize(size)
 
 
-def create_quote_image(excerpt, source, link, translated=False, title="", color="#b9a0ff", image_bytes=None, original_language="", theme="gris", background="") :
+def create_quote_image(excerpt, source, link, translated=False, title="", color="#b9a0ff", image_bytes=None, original_language="", theme="gris", background="", source_icon=None, show_link=True) :
     """Genera una cita cuadrada de alta resolución para publicar."""
     light = theme == "periodico"
     scale = 2  # 2160 px conserva nitidez tras la compresión de redes sociales.
@@ -631,7 +609,12 @@ def create_quote_image(excerpt, source, link, translated=False, title="", color=
     muted = "#525b67" if light else "#c0ccd8"
     border = "#89929b" if light else "#9cabb8"
     drawing = ImageDraw.Draw(image)
-    path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    if background == 'choroy':
+        # Saturated brand frame, with a dark interior to keep the quote readable.
+        drawing.rounded_rectangle((64 * scale, 64 * scale, 1016 * scale, 1016 * scale), radius=24 * scale, fill='#12251E')
+        color, border, muted = '#A4D52F', '#A4D52F', '#CDDDD3'
+    fonts = Path(__file__).resolve().parent.parent / 'assets' / 'fonts'
+    path = str(fonts / 'DejaVuSans.ttf')
     def font_size(size):
         try:
             return ImageFont.truetype(path, size * scale)
@@ -650,7 +633,7 @@ def create_quote_image(excerpt, source, link, translated=False, title="", color=
             lines.append(line)
         return lines
     try:
-        title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30 * scale)
+        title_font = ImageFont.truetype(str(fonts / 'DejaVuSans-Bold.ttf'), 30 * scale)
     except OSError:
         title_font = font_size(30)
     text_width = 880 * scale
@@ -676,17 +659,37 @@ def create_quote_image(excerpt, source, link, translated=False, title="", color=
     drawing.multiline_text((94 * scale, quote_y), "\n".join(lines), font=font, fill="#202020" if light else "#edf1f7", spacing=14 * scale)
     drawing.line((94 * scale, 920 * scale, 986 * scale, 920 * scale), fill=border, width=2 * scale)
     language = {"en": "inglés", "es": "español"}.get(original_language)
-    origin = "Versión original en " + language if language else "Versión original"
-    attribution = source[:45] + " · " + origin
-    drawing.text((94 * scale, 944 * scale), attribution, font=font_size(18), fill="#202020" if light else "#dbe1e9")
-    drawing.text((94 * scale, 978 * scale), urllib.parse.urlparse(link).netloc[:75], font=font_size(17), fill=muted)
+    origin = "Traducción al español" if translated else ("Versión original en " + language if language else "Versión original")
+    source_x = 94 * scale
+    if source_icon:
+        try:
+            with Image.open(source_icon) as favicon:
+                favicon = favicon.convert('RGBA')
+                favicon.thumbnail((28 * scale, 28 * scale), Image.Resampling.LANCZOS)
+                drawing.rounded_rectangle((94 * scale, 936 * scale, 128 * scale, 970 * scale), radius=6 * scale, fill='#FFFFFF')
+                image.paste(favicon, (111 * scale - favicon.width // 2, 953 * scale - favicon.height // 2), favicon)
+                source_x = 140 * scale
+        except (OSError, ValueError):
+            pass
 
-    # Sello discreto: se incorpora al archivo final, no solo a la vista previa.
-    seal_font = font_size(15)
-    seal_text = "CHOROY READER"
-    seal_size = 34 * scale
-    seal_x = 986 * scale - int(drawing.textlength(seal_text, font=seal_font)) - seal_size - 10 * scale
-    seal_y = 950 * scale
+    def footer_text(text, font, width):
+        if drawing.textlength(text, font=font) <= width:
+            return text
+        while text and drawing.textlength(text + '…', font=font) > width:
+            text = text[:-1]
+        return text + '…'
+
+    attribution_width = 780 * scale - source_x
+    drawing.text((source_x, 936 * scale), footer_text(source, font_size(18), attribution_width), font=font_size(18), fill=color)
+    drawing.text((source_x, 963 * scale), origin, font=font_size(15), fill=muted)
+    # Display-only abbreviation: the full article URL remains in metadata and can
+    # be copied from the editor. A raster image cannot contain a clickable link.
+    compact_link = link.removeprefix('https://').removeprefix('http://')
+    if show_link:
+        drawing.text((94 * scale, 991 * scale), footer_text('Link: ' + compact_link, font_size(14), 686 * scale), font=font_size(14), fill=muted)
+
+    seal_size = 76 * scale
+    seal_x, seal_y = 800 * scale, 936 * scale
     logo_path = Path(__file__).resolve().parent.parent / "assets" / "choroy_reader_logo.png"
     try:
         with Image.open(logo_path) as logo:
@@ -695,6 +698,7 @@ def create_quote_image(excerpt, source, link, translated=False, title="", color=
             image.paste(logo, (seal_x, seal_y), logo)
     except (OSError, ValueError):
         pass
-    drawing.text((seal_x + seal_size + 10 * scale, seal_y + 6 * scale), seal_text, font=seal_font, fill=muted)
+    drawing.text((888 * scale, 950 * scale), "Choroy", font=font_size(20), fill=color)
+    drawing.text((888 * scale, 978 * scale), "Reader", font=font_size(20), fill=muted)
     image.info["articulo"] = link
     return image

@@ -42,8 +42,10 @@ class LibraryTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             path.write_text(json.dumps(article))
             os.utime(path, ns=(123456789, 123456789))
+            # Windows file times use 100 ns ticks; preserve what the filesystem stores.
+            saved_at = path.stat().st_mtime_ns
             library.save('guardados', dict(article, titulo='Actualizado'))
-            self.assertEqual(library.read('guardados', article['link'])['guardado_en'], 123456789)
+            self.assertEqual(library.read('guardados', article['link'])['guardado_en'], saved_at)
 
     def test_refresh_reuses_cover_and_translated_title(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -58,12 +60,19 @@ class LibraryTests(unittest.TestCase):
                 translate.assert_not_called()
                 image.assert_not_called()
 
-    def test_cover_cache_does_not_decode_images_on_ui_thread(self):
+    def test_cover_cache_validates_headers_without_decoding_pixels(self):
+        import io
+        from PIL import Image
+        output = io.BytesIO()
+        Image.new('RGB', (20, 20)).save(output, 'PNG')
+        data = output.getvalue()
         with tempfile.TemporaryDirectory() as tmp:
             service = Service(tmp)
-            with patch('choroy_reader.service.Image.open', side_effect=AssertionError('Synchronous decode')):
-                first = service.image_url(b'cover bytes')
-                self.assertEqual(service.image_url(b'cover bytes'), first)
+            with patch('PIL.PngImagePlugin.PngImageFile.load', side_effect=AssertionError('Synchronous decode')):
+                first = service.image_url(data)
+                self.assertTrue(first.startswith('file:'))
+                self.assertEqual(service.image_url(data), first)
+                self.assertEqual(service.image_url(b'<svg></svg>'), '')
             self.assertEqual(len(list((Path(tmp) / 'cache' / 'images').iterdir())), 1)
 
     def test_history_retention_protection_recovery_and_identity(self):
@@ -218,6 +227,18 @@ class ServiceTests(unittest.TestCase):
         s.articles={'a':[dict(link='1',titulo='Seguridad',fecha=datetime.now(),source_url='a'),dict(link='2',titulo='SEGURIDAD y privacidad',fecha=datetime.now(),source_url='a')]}
         self.assertEqual([a['link'] for a in s.filtered(category='Tech',query='seguridad')],['2','1'])
         self.assertEqual(s.filtered(query='imposible'),[])
+
+    def test_saved_search_includes_original_and_translation_only_when_requested(self):
+        s = self.service
+        article = dict(link='https://example.com/saved', titulo='Título visible', titulo_es='Translated heading')
+        s.library.save('guardados', article)
+        s.reader_store.save_translation(article['link'], 'Astronomy snapshot', 'Traducción sobre astronomía')
+        self.assertEqual(len(s.filtered(page='guardados', query='heading')), 1)
+        self.assertEqual(s.filtered(page='guardados', query='astronomia'), [])
+        for query in ('astronomy', 'astronomia'):
+            self.assertEqual(len(s.filtered(page='guardados', query=query, include_body=True)), 1)
+        s.library.delete('guardados', article['link'])
+        self.assertEqual(s.filtered(page='guardados', query='astronomia', include_body=True), [])
 
     def test_feed_and_content_parsing(self):
         rss=b'<rss><channel><item><title>Titulo</title><link>https://example.com/a</link><description>&lt;p&gt;Contenido&lt;/p&gt;&lt;img src="/cover.jpg"&gt;</description></item></channel></rss>'

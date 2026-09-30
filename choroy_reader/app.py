@@ -26,6 +26,7 @@ def run():
     app_info = load_about(Path(__file__).resolve().parent.parent / 'assets')
     app.setApplicationName(app_info['name'])
     app.setApplicationVersion(app_info['version'])
+    app.setDesktopFileName('choroy_reader' if getattr(sys, 'frozen', False) else 'noticias')
     app.setOrganizationName('Choroy Reader')
     project = Path(__file__).resolve().parent.parent
     config_root = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))

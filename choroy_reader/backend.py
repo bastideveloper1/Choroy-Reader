@@ -51,10 +51,14 @@ class Backend(QObject):
         self.about_info = load_about(self.asset_dir)
         self.update_info = dict(busy=False, available=False, version='', notes='', url='',
                                 message='Consulta manual en GitHub; incluye versiones beta.')
+        self.forest_month = datetime.now().strftime('%Y-%m')
+        self.forest_sort = 'review'
+        self.forest_report = self.service.forest.report(self.service.config['categorias'], self.forest_month)
         self.notice_title = ''
         self.notice_body = '' 
         self.page, self.category, self.source, self.query = 'feed', '', '', ''
         self.navigation_history = []
+        self.search_content = False
         self.collection_filter = ''
         self.status = 'Listo'
         self.busy = False
@@ -173,11 +177,13 @@ class Backend(QObject):
         name = self.service.config.get('color', 'gris')
         p = core.THEME_PALETTE.get(name, core.THEME_PALETTE['gris'])
         light = name == 'periodico'
-        return dict(bg='#e6e6e6' if light else '#111315', panel='#dedede' if light else '#191d23',
-                    card='#ededed' if light else '#171717', hover='#cccccc' if light else '#29313d',
-                    text='#202020' if light else '#edf1f7', muted='#626262' if light else '#8793a3',
-                    border='#b7b7b7' if light else '#30363e', accent=p['base_fuerte'],
-                    accent_text='#ffffff' if light else '#171717', light=light)
+        return dict(bg='#F5F6F4' if light else '#0C0E0F', panel='#ECEEEB' if light else '#121516',
+                    card='#FFFFFF' if light else '#191C1E', hover='#F0F2EF' if light else '#232729',
+                    text='#18201D' if light else '#F1F3F2', muted='#66706B' if light else '#9DA8A3',
+                    border='#D7DBD6' if light else '#354047', accent='#A4D52F',
+                    forest='#078A5B', selection='#E5F2C7' if light else '#193D27',
+                    danger='#FF2533' if light else '#FF3945',
+                    accent_text='#18201D', light=light)
 
     def title_html(self, text):
         ranges = find_matches(text, self.query)
@@ -209,6 +215,11 @@ class Backend(QObject):
 
     def publish(self):
         cfg = self.service.config
+        if self.page == 'forest':
+            self.forest_report = self.service.forest.report(cfg['categorias'], self.forest_month, self.forest_sort)
+            source_icons = {src['url']: self.service.favicon_url(src) for cat in cfg['categorias'] for src in cat['sitios']}
+            for row in self.forest_report['rows']:
+                row['icon'] = source_icons.get(row['url'], '')
         themes = [dict(key=k, name=v, color=core.THEME_PALETTE[k]['base_fuerte']) for k, v in core.THEME_NAMES.items()]
         categories = []
         for ci, cat in enumerate(cfg['categorias']):
@@ -233,11 +244,11 @@ class Backend(QObject):
                           translating=self.translating, ready=bool(self.reader.get('cuerpo')),
                           show_image=cfg.get('mostrar_imagenes_lectura', True))
         collection_items = [dict(id='', name='Todas las colecciones')] + [dict(id=item['id'], name=item['name']) for item in cfg.get('colecciones', [])]
-        articles = self.service.filtered(self.page, self.category, self.source, self.query) if self.page in {'feed','guardados','descargas','archivados','historial','retirados'} else []
+        articles = self.service.filtered(self.page, self.category, self.source, self.query, include_body=self.search_content) if self.page in {'feed','guardados','descargas','archivados','historial','retirados'} else []
         if self.page == 'guardados' and self.collection_filter:
             links = next((set(item.get('links', [])) for item in cfg.get('colecciones', []) if item['id'] == self.collection_filter), set())
             articles = [article for article in articles if article['link'] in links]
-        self._state = dict(updates=self.update_info, marker_colors=MARKER_COLORS, about=self.about_info, notice_title=self.notice_title, notice_body=self.notice_body, storage=self.storage_info, page=self.page, category=self.category, source=self.source, query=self.query,
+        self._state = dict(search_content=self.search_content, forest_icon=QUrl.fromLocalFile(str(self.asset_dir / 'bosqueicon.png')).toString(), forest_image=QUrl.fromLocalFile(str(self.asset_dir / ('choroybosque.png' if self.palette()['light'] else 'choroybosquenoche.png'))).toString(), forest=self.forest_report, forest_month=self.forest_month, forest_sort=self.forest_sort, updates=self.update_info, marker_colors=MARKER_COLORS, about=self.about_info, notice_title=self.notice_title, notice_body=self.notice_body, storage=self.storage_info, page=self.page, category=self.category, source=self.source, query=self.query,
                            link_sources=sorted(
                                [src for cat in categories if not self.category or cat['name'] == self.category
                                 for src in cat['sources']
@@ -355,6 +366,21 @@ class Backend(QObject):
             self.navigate(*destination)
             self.navigation_history = history
 
+    @Slot(str, str)
+    def forest_filter(self, month, sort):
+        self.forest_month, self.forest_sort = month, sort
+        self.publish()
+
+    @Slot(str, str)
+    def forest_action(self, url, action):
+        if action == 'delete':
+            for category in self.service.config['categorias']:
+                category['sitios'] = [s for s in category['sitios'] if s['url'] != url]
+            self.service.save_config()
+        else:
+            self.service.forest.review(url, action)
+        self.publish()
+
     @Slot()
     def refresh_storage(self):
         def done(value, error):
@@ -379,6 +405,11 @@ class Backend(QObject):
                 self.status = 'Caché limpiada · ' + self._format_size(released) + ' recuperados'
             self.publish()
         self.background(work, done)
+
+    @Slot(bool)
+    def set_search_content(self, enabled):
+        self.search_content = enabled
+        self.publish()
 
     @Slot(str)
     def search_titles(self, query):
@@ -547,6 +578,7 @@ class Backend(QObject):
             if error:
                 self.reader_status = error
             else:
+                self.service.forest.record(value, 'opened')
                 self.reader = value
                 self.reader_body = value['cuerpo']
                 self.reader_status = value.get('estado_contenido', '')
@@ -757,6 +789,7 @@ class Backend(QObject):
             self.service.dismissed.remove(link)
         else:
             self.service.dismissed.add(link)
+            self.service.forest.record(self.get_article(link), 'dismissed')
         self.service.save_config()
         if link in self.service.dismissed and self.reader and self.reader['link'] == link:
             self.close_article()
@@ -795,6 +828,7 @@ class Backend(QObject):
                 self.service.save_config()
             else:
                 self.service.library.save('guardados', article)
+                self.service.forest.record(article, 'saved')
             self.publish()
         except Exception as e:
             self.error.emit(str(e))
@@ -1054,7 +1088,8 @@ class Backend(QObject):
     @Slot(bool, bool, str)
     @Slot(bool, bool, bool, str)
     @Slot(bool, bool, bool, str, str)
-    def update_quote(self, spanish, image, title_spanish=False, theme=None, background=""):
+    @Slot(bool, bool, bool, str, str, bool, bool)
+    def update_quote(self, spanish, image, title_spanish=False, theme=None, background="", show_link=True, show_source_icon=True):
         # Conserva compatibilidad con la llamada anterior de tres argumentos.
         if theme is None and isinstance(title_spanish, str):
             theme, title_spanish = title_spanish, False
@@ -1078,9 +1113,12 @@ class Backend(QObject):
                 text = translated_text
             a = data['article']
             title = a.get('titulo_es') if title_spanish and a.get('titulo_es') else a.get('titulo', '')
+            source = next((src for cat in self.service.config['categorias'] for src in cat['sitios']
+                           if src['url'] == a.get('source_url')), {'url': a.get('source_url', '')})
+            source_icon = source.get('favicon_personalizado') or self.service.favicon_path(source['url'])
             img = core.create_quote_image(text, a.get('fuente',''), a['link'], spanish,
                     title=title, color=core.THEME_PALETTE[theme]['base_fuerte'],
-                    image_bytes=a.get('imagen') if image else None, original_language=a.get('idioma_original',''), theme=theme, background=background)
+                    image_bytes=a.get('imagen') if image else None, original_language=a.get('idioma_original',''), theme=theme, background=background, source_icon=source_icon if show_source_icon else None, show_link=show_link)
             return img, translated_text
         def done(value, error):
             if token != self.quote_token:
@@ -1109,6 +1147,14 @@ class Backend(QObject):
         else:
             self.background(work, done)
 
+    @Slot()
+    def copy_quote_link(self):
+        if self.quote_data:
+            from PySide6.QtGui import QGuiApplication
+            QGuiApplication.clipboard().setText(self.quote_data['article']['link'])
+            self.status = 'Enlace original copiado para acompañar la imagen'
+            self.publish()
+
     @Slot(str)
     def export_quote(self, url):
         if self.quote_image is None or not self.quote_data:
@@ -1125,6 +1171,7 @@ class Backend(QObject):
                 metadata = PngInfo()
                 metadata.add_text('Fuente', self.quote_data['article']['link'])
                 self.quote_image.save(path, 'PNG', pnginfo=metadata)
+            self.service.forest.record(self.quote_data['article'], 'quoted')
             self.status = 'Imagen guardada'
             self.publish()
         except Exception as e:
@@ -1389,6 +1436,8 @@ class Backend(QObject):
             link, language, body = self._document_key
             try:
                 self.service.reader_store.save_marks(link, language, body, self.marks)
+                if self.marks and self.reader:
+                    self.service.forest.record(self.reader, 'highlighted')
                 if self.marks and self.reader and not self.service.library.contains('guardados', link):
                     self.service.library.save('guardados', self.reader)
                     self.publish()

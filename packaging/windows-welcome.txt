@@ -1,0 +1,11 @@
+Choroy Reader · Tu lector, tu bosque.
+
+Tus fuentes favoritas, una biblioteca para leer con calma y un bosque que crece con tus intereses.
+
+Esta instalación incluye el programa y sus componentes. No necesitas instalar Python.
+
+Al actualizar, tus fuentes, artículos guardados, notas y preferencias se conservan. El instalador no incluye datos personales del desarrollador.
+
+Las fuentes e imágenes se consultan por Internet. La traducción usa Google Translate cuando está activada. Puedes desactivar la traducción en la configuración de cada fuente y descargar artículos para leer sin conexión.
+
+Hecho en Santiago de Chile por Bastian Enrique.

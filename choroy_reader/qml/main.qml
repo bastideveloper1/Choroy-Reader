@@ -11,6 +11,7 @@ ApplicationWindow {
     minimumWidth: 700; minimumHeight: 500
     onClosing: function(close) { if (note_editor.visible) { close.accepted = note_editor.save(); } }
     title: "Choroy Reader"
+    FontLoader { id: interface_font; source: "../../assets/fonts/DejaVuSans.ttf" }
     property var s: backend.state
     property var p: s.palette
     palette.window: p.panel
@@ -27,7 +28,51 @@ ApplicationWindow {
     palette.light: p.hover
     property real feed_scroll: 0
     property bool sidebar_visible: true
+    property bool shortcuts_open: false
     property bool reading_mode: false
+    property bool forest_active: s.page === "forest" && !reader_open
+    property int forest_previous_visibility: Window.Windowed
+    property bool forest_window_ready: false
+    Component.onCompleted: Qt.callLater(function() { forest_window_ready = true; if (forest_active) sync_forest_window(); })
+    onForest_activeChanged: { if (forest_window_ready) sync_forest_window(); }
+    function sync_forest_window() {
+        if (forest_active) {
+            forest_previous_visibility = visibility;
+            showFullScreen();
+            forest_intro.opacity = 1;
+        } else {
+            forest_intro.opacity = 0;
+            visibility = forest_previous_visibility;
+        }
+    }
+    Shortcut {
+        sequence: "Escape"; context: Qt.WindowShortcut
+        enabled: window.forest_active && !forest_delete.visible
+        onActivated: {
+            if (forest_intro.opacity > 0) { forest_intro.opacity = 0; }
+            else backend.navigate("feed", "", "");
+        }
+    }
+    Rectangle {
+        id: forest_intro; objectName: "forestIntro"
+        anchors.fill: parent; z: 2000; color: p.bg
+        opacity: 0; visible: opacity > 0; enabled: visible
+        Behavior on opacity { NumberAnimation { duration: 650; easing.type: Easing.InOutQuad } }
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.LeftButton; cursorShape: Qt.PointingHandCursor; onClicked: forest_intro.opacity = 0 }
+        ColumnLayout {
+            anchors.centerIn: parent; width: Math.min(1000, parent.width - 40); spacing: 16
+            Image { objectName: "forestIntroImage"; source: s.forest_image; fillMode: Image.PreserveAspectFit; Layout.alignment: Qt.AlignHCenter; Layout.preferredWidth: Math.min(840, parent.width, Math.max(0, window.height - forest_intro_text.implicitHeight - 56) * 1.5); Layout.preferredHeight: Layout.preferredWidth / 1.5 }
+            ColumnLayout {
+                id: forest_intro_text
+                Layout.alignment: Qt.AlignHCenter
+                Layout.fillWidth: true; Layout.maximumWidth: 600; spacing: 16
+            Label { textFormat: Text.PlainText; text: "EL BOSQUE"; color: p.accent; font.letterSpacing: 3; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true }
+            Label { textFormat: Text.PlainText; text: "Cuidar lo que te rodea también es elegir qué dejas crecer."; color: p.text; font.pixelSize: 28; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true }
+            Label { textFormat: Text.PlainText; text: "Haz espacio para las fuentes que te aportan."; color: p.muted; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true }
+            Action { objectName: "forestIntroStart"; text: "Haz clic para entrar en El Bosque"; Layout.alignment: Qt.AlignHCenter; onClicked: { forest_intro.opacity = 0; } }
+            }
+        }
+    }
     property int previous_visibility: Window.Windowed
     property bool reader_open: !!s.reader.link
     onReader_openChanged: { if (!reader_open) leave_reading_mode(); }
@@ -115,7 +160,7 @@ ApplicationWindow {
         }
     }
     color: p.bg
-    font.family: "Sans Serif"
+    font.family: interface_font.name
     font.pixelSize: 13
 
     component Action: Button {
@@ -129,11 +174,11 @@ ApplicationWindow {
         property string favicon: ""
         leftPadding: 12; rightPadding: 12; topPadding: compact ? 5 : 9; bottomPadding: compact ? 5 : 9
         implicitHeight: Math.max(32, contentItem.implicitHeight + topPadding + bottomPadding)
-        background: Rectangle { radius: 6; color: control.warning ? (p.light ? "#f0dcdc" : "#39272a") : control.down ? Qt.lighter(p.hover, 1.35) : control.hovered ? Qt.lighter(p.hover, 1.2) : control.shortcut ? (p.light ? "#e2f5ff" : "#123248") : control.active ? p.hover : "transparent"; border.color: control.shortcut ? "#42b8e8" : control.visualFocus ? p.accent : "transparent" }
+        background: Rectangle { radius: 6; color: control.warning ? (p.light ? "#f0dcdc" : "#39272a") : control.down ? Qt.lighter(p.hover, 1.35) : control.hovered ? Qt.lighter(p.hover, 1.2) : control.shortcut ? p.hover : control.active ? p.selection : "transparent"; border.color: control.shortcut ? p.border : control.visualFocus ? p.accent : "transparent" }
         contentItem: RowLayout { spacing: 10
             Image { visible: control.favicon.length > 0; source: control.favicon; Layout.preferredWidth: 18; Layout.preferredHeight: 18; fillMode: Image.PreserveAspectFit; smooth: true; mipmap: true }
-            Glyph { visible: control.symbol.length > 0; kind: control.symbol; ink: p.accent; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
-            Text { Layout.fillWidth: true; text: control.text; color: !control.enabled ? p.muted : control.shortcut ? (p.light ? "#087dab" : "#8addff") : control.active ? p.accent : p.text; font: control.font; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
+            Glyph { visible: control.symbol.length > 0; kind: control.symbol; ink: control.active ? (p.light ? p.forest : p.accent) : p.text; Layout.preferredWidth: 20; Layout.preferredHeight: 20 }
+            Text { textFormat: Text.PlainText; Layout.fillWidth: true; text: control.text; color: !control.enabled ? p.muted : control.shortcut ? p.text : control.active ? (p.light ? p.text : p.accent) : p.text; font: control.font; wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter }
         }
     }
     component Search: TextField {
@@ -141,19 +186,19 @@ ApplicationWindow {
         implicitHeight: 38
         leftPadding: 14; rightPadding: 14
         color: p.text; placeholderTextColor: p.muted; selectionColor: p.accent; selectedTextColor: p.accent_text
-        background: Rectangle { color: p.hover; radius: 18; border.width: 1; border.color: field.activeFocus ? p.accent : p.border }
+        background: Rectangle { color: p.hover; radius: 9; border.width: 1; border.color: field.activeFocus ? p.accent : p.border }
     }
     component SettingsChoice: ComboBox {
         id: choice
         implicitHeight: 38
         background: Rectangle { radius: 8; color: p.hover; border.color: choice.activeFocus ? p.accent : p.border }
-        contentItem: Text { text: choice.displayText; color: p.text; leftPadding: 12; rightPadding: 30; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
-        indicator: Text { text: "⌄"; color: p.accent; x: parent.width - width - 12; y: (parent.height - height)/2 }
+        contentItem: Text { textFormat: Text.PlainText; text: choice.displayText; color: p.text; leftPadding: 12; rightPadding: 30; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+        indicator: Text { textFormat: Text.PlainText; text: "⌄"; color: p.accent; x: parent.width - width - 12; y: (parent.height - height)/2 }
         delegate: ItemDelegate {
             required property int index
             required property var modelData
             width: choice.width
-            contentItem: Text { text: modelData; color: choice.currentIndex === index ? p.accent : p.text; elide: Text.ElideRight }
+            contentItem: Text { textFormat: Text.PlainText; text: modelData; color: choice.currentIndex === index ? p.accent : p.text; elide: Text.ElideRight }
             background: Rectangle { color: parent.hovered || choice.currentIndex === parent.index ? p.hover : p.panel }
         }
         popup: Popup {
@@ -166,9 +211,9 @@ ApplicationWindow {
     component Check: CheckBox {
         id: check
         spacing: 10
-        contentItem: Text { text: check.text; color: p.text; leftPadding: check.indicator.width + check.spacing; verticalAlignment: Text.AlignVCenter; wrapMode: Text.Wrap }
+        contentItem: Text { textFormat: Text.PlainText; text: check.text; color: p.text; leftPadding: check.indicator.width + check.spacing; verticalAlignment: Text.AlignVCenter; wrapMode: Text.Wrap }
         indicator: Rectangle { x: 0; y: (check.height-height)/2; width: 20; height: 20; radius: 5; color: check.checked ? p.accent : p.hover; border.color: p.border
-            Text { anchors.centerIn: parent; text: check.checked ? "✓" : ""; color: p.accent_text }
+            Text { textFormat: Text.PlainText; anchors.centerIn: parent; text: check.checked ? "✓" : ""; color: p.accent_text }
         }
     }
     component Glyph: Item {
@@ -208,9 +253,9 @@ ApplicationWindow {
         Layout.minimumWidth: 34; Layout.maximumWidth: 34
         Layout.minimumHeight: 34; Layout.maximumHeight: 34
         Accessible.name: hint
-        background: Rectangle { anchors.centerIn: parent; width: 34; height: 34; radius: 6; color: icon_control.stateActive ? "#62834b" : icon_control.hovered ? p.hover : p.card; border.width: icon_control.stateActive ? 2 : 1; border.color: icon_control.stateActive ? "#9cbd78" : icon_control.visualFocus ? p.accent : p.border }
+        background: Rectangle { anchors.centerIn: parent; width: 34; height: 34; radius: 6; color: icon_control.stateActive ? p.forest : icon_control.hovered ? p.hover : p.card; border.width: icon_control.stateActive ? 2 : 1; border.color: icon_control.stateActive ? p.accent : icon_control.visualFocus ? p.accent : p.border }
         contentItem: Item {
-            Glyph { anchors.centerIn: parent; width: 20; height: 20; kind: icon_control.kind; ink: icon_control.stateActive ? "#ffffff" : icon_control.kind === "delete" ? (p.light ? "#b3261e" : "#ff8a80") : p.accent; filled: icon_control.filled; opacity: icon_control.enabled ? 1 : 0.4 }
+            Glyph { anchors.centerIn: parent; width: 20; height: 20; kind: icon_control.kind; ink: icon_control.stateActive ? "#ffffff" : icon_control.kind === "delete" ? p.danger : p.muted; filled: icon_control.filled; opacity: icon_control.enabled ? 1 : 0.4 }
         }
         ToolTip.visible: hovered; ToolTip.text: hint; ToolTip.delay: 400
     }
@@ -233,7 +278,7 @@ ApplicationWindow {
                 NumberAnimation { from: 0.28; to: 0.08; duration: 1200; easing.type: Easing.InOutSine }
             }
         }
-        Label {
+        Label { textFormat: Text.PlainText;
             id: radar_badge_text
             anchors.left: parent.left; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
             anchors.margins: 8
@@ -242,7 +287,7 @@ ApplicationWindow {
         }
     }
 
-    component SectionTitle: Label { color: p.text; font.pixelSize: 17; font.bold: true; wrapMode: Text.Wrap }
+    component SectionTitle: Label { textFormat: Text.PlainText; color: p.text; font.pixelSize: 17; font.bold: true; wrapMode: Text.Wrap }
 
     ColumnLayout {
         anchors.fill: parent; spacing: 0
@@ -258,8 +303,8 @@ ApplicationWindow {
             }
         }
         Rectangle {
-            objectName: "appHeader"; visible: !window.reading_mode
-            Layout.fillWidth: true; Layout.preferredHeight: 84; color: p.bg
+            objectName: "appHeader"; visible: !window.sidebar_visible && !window.reading_mode && !window.forest_active
+            Layout.fillWidth: true; Layout.preferredHeight: 44; color: p.bg
             Action {
                 objectName: "sidebarToggle"
                 anchors.left: parent.left; anchors.leftMargin: 14; anchors.verticalCenter: parent.verticalCenter
@@ -267,104 +312,49 @@ ApplicationWindow {
                 Accessible.name: window.sidebar_visible ? "Ocultar menú lateral" : "Mostrar menú lateral"
                 ToolTip.visible: hovered; ToolTip.text: Accessible.name
             }
-            RowLayout {
-                anchors.centerIn: parent; spacing: 14
-                Image { objectName: "appLogo"; source: s.logo; Layout.preferredWidth: 64; Layout.preferredHeight: 64; fillMode: Image.PreserveAspectFit; smooth: true; mipmap: true }
-                ColumnLayout {
-                    Label { text: "Tus fuentes. Tu feed. Sin distracciones."; color: p.accent; font.bold: true; font.pixelSize: 15; Layout.alignment: Qt.AlignHCenter; wrapMode: Text.Wrap; Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter }
-                    Rectangle { Layout.preferredWidth: 100; Layout.preferredHeight: 2; color: p.accent; Layout.alignment: Qt.AlignHCenter }
-                }
-            }
+
         }
         RowLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; spacing: 0
             Rectangle {
-                objectName: "sidebarPanel"; visible: window.sidebar_visible && !window.reading_mode && !note_editor.visible
-                Layout.preferredWidth: 280; Layout.fillHeight: true; color: p.panel
+                objectName: "sidebarPanel"; visible: window.sidebar_visible && !window.reading_mode && !window.forest_active && !note_editor.visible
+                Layout.preferredWidth: 248; Layout.fillHeight: true; color: p.panel
                 ColumnLayout {
                     anchors.fill: parent; spacing: 2
+                    RowLayout {
+                        Layout.fillWidth: true; Layout.margins: 16; spacing: 10
+                        Image { objectName: "appLogo"; source: s.logo; Layout.preferredWidth: 44; Layout.preferredHeight: 44; fillMode: Image.PreserveAspectFit; smooth: true; mipmap: true }
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 3
+                            Label { textFormat: Text.PlainText; text: "Choroy Reader"; color: p.text; font.bold: true; font.pixelSize: 16 }
+                            Label { textFormat: Text.PlainText; text: "Tu lector, tu bosque."; color: p.muted; font.pixelSize: 11 }
+                        }
+                        Action { objectName: "sidebarHide"; text: "‹"; compact: true; Accessible.name: "Ocultar menú lateral"; onClicked: window.sidebar_visible = false }
+                    }
                     ScrollView {
                         id: side_scroll; Layout.fillWidth: true; Layout.fillHeight: true; clip: true
                         contentWidth: availableWidth
                         ColumnLayout {
                             width: side_scroll.availableWidth; spacing: 4
                             Action { objectName: "articlesNavigation"; Layout.preferredHeight: 38; symbol: "articles"; text: "Todos los artículos"; active: s.page === "feed" && s.category === ""; Layout.fillWidth: true; Layout.margins: 14; onClicked: backend.navigate("feed", "", "") }
-                            Label { text: "BIBLIOTECA"; color: p.muted; font.pixelSize: 10; font.bold: true; Layout.leftMargin: 22; Layout.topMargin: 2; Layout.bottomMargin: 2 }
+                            Label { textFormat: Text.PlainText; text: "BIBLIOTECA"; color: p.muted; font.pixelSize: 10; font.bold: true; Layout.leftMargin: 22; Layout.topMargin: 2; Layout.bottomMargin: 2 }
                             Action { symbol: "save"; text: "Guardados"; active: s.page === "guardados"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("guardados", "", "") }
                             Action { symbol: "articles"; text: "Historial"; active: s.page === "historial"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("historial", "", "") }
                             Action { symbol: "archive"; text: "Archivados"; active: s.page === "archivados"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("archivados", "", "") }
                             Action { symbol: "download"; text: "Descargas"; active: s.page === "descargas"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("descargas", "", "") }
                             RowLayout {
                                 Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
-                                Label { text: "Radar de intereses"; color: p.text; Layout.fillWidth: true }
+                                Label { textFormat: Text.PlainText; text: "Radar de intereses"; color: p.text; Layout.fillWidth: true }
                                 Switch {
                                     id: radar_switch; objectName: "radar_switch"; checked: s.radar; onClicked: backend.toggle_radar(); padding: 0
-                                    indicator: Rectangle { width: 42; height: 24; radius: 12; color: radar_switch.checked ? "#62834b" : "#777b82"
+                                    indicator: Rectangle { width: 42; height: 24; radius: 12; color: radar_switch.checked ? p.forest : "#777b82"
                                         Rectangle { x: radar_switch.checked ? 21 : 3; y: 3; width: 18; height: 18; radius: 9; color: "#f0f0f0"; Behavior on x { NumberAnimation { duration: 110 } } }
                                     }
                                 }
                             }
-                            Label { text: "TUS CATEGORÍAS"; color: p.muted; font.pixelSize: 10; font.bold: true; Layout.leftMargin: 22; Layout.bottomMargin: 5 }
-                            Repeater {
-                                model: s.categories
-                                delegate: ColumnLayout {
-                                    id: category_delegate; required property var modelData
-                                    property bool expanded: !!window.expanded_categories[modelData.name]
-                                    Layout.fillWidth: true; spacing: 2
-                                    Action {
-                                        id: category_button; objectName: "category_" + category_delegate.modelData.name
-                                        favicon: category_delegate.modelData.icon
-                                        text: category_delegate.modelData.name
-                                        active: s.category === category_delegate.modelData.name; Layout.fillWidth: true; Layout.leftMargin: 12; Layout.rightMargin: 12; Layout.topMargin: 6
-                                        Accessible.name: "Categoría: " + text
-                                        Accessible.description: category_delegate.expanded ? "Contraer fuentes" : "Expandir fuentes"
-                                        background: Rectangle {
-                                            radius: 6; color: category_button.hovered ? Qt.lighter(p.hover, 1.12) : p.hover
-                                            border.color: category_button.active || category_button.visualFocus ? p.accent : p.border
-                                            Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.margins: 5; width: 3; radius: 1; color: p.accent }
-                                        }
-                                        contentItem: RowLayout {
-                                            spacing: 8
-                                            Text { text: category_delegate.expanded ? "⌄" : "›"; color: p.accent; font.pixelSize: 18; Layout.preferredWidth: 12 }
-                                            Image { source: category_button.favicon; visible: source.toString().length > 0; Layout.preferredWidth: 18; Layout.preferredHeight: 18; fillMode: Image.PreserveAspectFit; smooth: true; mipmap: true }
-                                            Text { text: category_button.text; color: p.text; font.bold: true; font.pixelSize: 13; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                                            Rectangle {
-                                                implicitWidth: category_count.implicitWidth + 12; implicitHeight: 22; radius: 11; color: p.panel
-                                                Text { id: category_count; anchors.centerIn: parent; text: category_delegate.modelData.sources.length; color: p.muted; font.pixelSize: 11 }
-                                            }
-                                        }
-                                        onClicked: { const next=Object.assign({},window.expanded_categories); next[category_delegate.modelData.name]=!category_delegate.expanded; window.expanded_categories=next; }
-                                        ReorderArea {
-                                            kind: "category"; entry_key: String(category_delegate.modelData.index)
-                                            onActivate: category_button.clicked()
-                                            onContext: category_menu.popup()
-                                            onMoved: from_key => backend.move_category(Number(from_key), category_delegate.modelData.index - Number(from_key))
-                                        }
-                                        Menu { id: category_menu; MenuItem { objectName: "manage_category_" + category_delegate.modelData.name; text: "Ir a administrar categoría…"; onTriggered: window.manage_category(category_delegate.modelData, null) } }
-                                    }
-                                    ColumnLayout {
-                                        visible: category_delegate.expanded; Layout.fillWidth: true; Layout.leftMargin: 40; Layout.rightMargin: 12; spacing: 1
-                                        Action { text: "Todas las fuentes"; compact: true; Layout.fillWidth: true; onClicked: backend.navigate("feed",category_delegate.modelData.name,"") }
-                                        Repeater { model: category_delegate.modelData.sources
-                                            delegate: Action {
-                                                id: source_button
-                                                required property var modelData
-                                                font.pixelSize: 12
-                                                text: modelData.name + (modelData.direct_access ? " ↗" : modelData.no_feed ? " · Sin publicaciones" : modelData.web ? " · Web" : "")
-                                                favicon: modelData.icon; warning: modelData.no_feed; shortcut: modelData.direct_access; compact: true
-                                                active: s.source === modelData.url; Layout.fillWidth: true
-                                                onClicked: modelData.direct_access ? backend.open_url(modelData.url) : backend.navigate("feed",category_delegate.modelData.name,modelData.url)
-                                                TapHandler { acceptedButtons: Qt.RightButton; onTapped: source_menu.popup() }
-                                                Menu {
-                                                    id: source_menu
-                                                    MenuItem { text: "Abrir sitio web ↗"; onTriggered: backend.open_url(source_button.modelData.url) }
-                                                    MenuItem { text: "Ir a administrar fuente…"; onTriggered: window.manage_category(category_delegate.modelData, source_button.modelData) }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            Label { textFormat: Text.PlainText; text: "FUENTES"; color: p.muted; font.pixelSize: 10; font.bold: true; Layout.leftMargin: 22; Layout.topMargin: 16 }
+                            Action { objectName: "forestNavigation"; text: "El Bosque"; favicon: s.forest_icon; active: s.page === "forest"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("forest", "", "") }
+                            Action { text: "Gestionar fuentes"; symbol: "articles"; Layout.fillWidth: true; Layout.leftMargin: 8; Layout.rightMargin: 8; onClicked: backend.navigate("sources", "", "") }
                             Item { height: 12; Layout.fillWidth: true }
                         }
                     }
@@ -396,7 +386,7 @@ ApplicationWindow {
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22; height: 1; color: p.border }
                     RowLayout {
                         Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 8
-                        Repeater { model: ["GitHub", "Instagram", "X", "Mastodon"]
+                        Repeater { model: ["GitHub", "Instagram", "Mastodon"]
                             delegate: Button {
                                 id: social_button
                                 required property string modelData
@@ -404,7 +394,10 @@ ApplicationWindow {
                                 Layout.minimumWidth: 34; Layout.maximumWidth: 34
                                 Layout.minimumHeight: 34; Layout.maximumHeight: 34
                                 topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
-                                Accessible.name: modelData + " del autor (próximamente)"
+                                objectName: "social_" + modelData
+                                Accessible.name: modelData + " del autor"
+                                onClicked: backend.open_url(s.about.socials[modelData])
+                                ToolTip.visible: hovered; ToolTip.text: modelData + " · " + s.about.socials[modelData]
                                 background: Item {}
                                 contentItem: Item {
                                   Canvas {
@@ -415,7 +408,6 @@ ApplicationWindow {
                                     onPaint: {
                                         const c=getContext("2d");c.reset();c.scale(width/24,height/24);c.strokeStyle=ink;c.fillStyle=ink;c.lineWidth=1.7;c.lineJoin="round";
                                         if(social_button.modelData==="Instagram") {c.strokeRect(3,3,18,18);c.beginPath();c.arc(12,12,4,0,Math.PI*2);c.stroke();c.beginPath();c.arc(18,6,1,0,Math.PI*2);c.fill();}
-                                        else if(social_button.modelData==="X") {c.beginPath();c.moveTo(4,3);c.lineTo(18,21);c.lineTo(21,21);c.lineTo(7,3);c.closePath();c.moveTo(20,3);c.lineTo(4,21);c.stroke();}
                                         else if(social_button.modelData==="GitHub") {c.beginPath();c.moveTo(5,8);c.lineTo(5,3);c.lineTo(10,6);c.lineTo(14,6);c.lineTo(19,3);c.lineTo(19,8);c.bezierCurveTo(24,17,17,20,12,20);c.bezierCurveTo(7,20,0,17,5,8);c.stroke();c.moveTo(10,20);c.lineTo(10,24);c.moveTo(14,20);c.lineTo(14,24);c.stroke();}
                                         else {c.strokeRect(2,3,20,16);c.beginPath();c.moveTo(3,19);c.lineTo(6,23);c.lineTo(16,23);c.moveTo(6,15);c.lineTo(6,8);c.lineTo(9,7);c.lineTo(12,10);c.lineTo(15,7);c.lineTo(18,8);c.lineTo(18,15);c.moveTo(12,10);c.lineTo(12,15);c.stroke();}
                                     }
@@ -424,12 +416,12 @@ ApplicationWindow {
                             }
                         }
                     }
-                    Label { text: s.radar_busy ? "Radar: analizando contenido…" : s.status; color: p.muted; wrapMode: Text.Wrap; font.pixelSize: 10; Layout.fillWidth: true; Layout.margins: 18 }
+                    Label { textFormat: Text.PlainText; text: s.radar_busy ? "Radar: analizando contenido…" : s.status; color: p.muted; wrapMode: Text.Wrap; font.pixelSize: 10; Layout.fillWidth: true; Layout.margins: 18 }
                 }
             }
             Loader {
                 id: main_loader; Layout.fillWidth: true; Layout.fillHeight: true
-                sourceComponent: s.reader.link ? reader_page : s.page === "about" ? about_page : s.page === "storage" ? storage_page : s.page === "design" ? design_page : s.page === "radar" ? radar_page : s.page === "sources" ? sources_page : feed_page
+                sourceComponent: s.reader.link ? reader_page : s.page === "forest" ? forest_page : s.page === "about" ? about_page : s.page === "storage" ? storage_page : s.page === "design" ? design_page : s.page === "radar" ? radar_page : s.page === "sources" ? sources_page : feed_page
             }
             Item {
                 visible: note_editor.visible && !note_editor.expanded
@@ -444,6 +436,9 @@ ApplicationWindow {
             spacing: 8
             RowLayout {
                 Layout.fillWidth: true; Layout.margins: 14; spacing: 10
+                Search { objectName: "titleSearch"; Layout.fillWidth: true; Layout.minimumWidth: 60; placeholderText: s.page === "guardados" && s.search_content ? "Buscar en títulos y contenido guardado" : "Buscar en títulos"; text: s.query; onTextEdited: title_search_delay.restart()
+                    Timer { id: title_search_delay; interval: 180; onTriggered: backend.search_titles(parent.text) }
+                }
                 Button {
                     id: refresh_button; objectName: "refreshFeedButton"
                     topInset: 0; bottomInset: 0; leftInset: 0; rightInset: 0
@@ -472,12 +467,12 @@ ApplicationWindow {
                     }
                     contentItem: RowLayout {
                         spacing: 7
-                        Text {
+                        Text { textFormat: Text.PlainText;
                             text: "↻"; color: "#ffffff"; font.pixelSize: 22
                             visible: s.busy
                             RotationAnimator on rotation { from: 0; to: 360; duration: 1100; loops: Animation.Infinite; running: s.busy && !s.refresh_cancelling }
                         }
-                        Text {
+                        Text { textFormat: Text.PlainText;
                             text: refresh_button.text; font.bold: true; color: "#ffffff"
                             Layout.fillWidth: true
                             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
@@ -526,7 +521,7 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Text {
+                        Text { textFormat: Text.PlainText;
                             text: offline_button.text; font.bold: true
                             color: offline_button.enabled ? "#ffffff" : "#a0a5ac"
                             Layout.fillWidth: true
@@ -536,32 +531,88 @@ ApplicationWindow {
                     ToolTip.visible: hovered
                     ToolTip.text: s.bulk_busy ? "Cancelar y eliminar las descargas nuevas de esta operación. Se conservan las anteriores." : "Descarga todos los artículos cargados para leerlos sin conexión."
                 }
-                Search { objectName: "titleSearch"; Layout.fillWidth: true; Layout.minimumWidth: 60; placeholderText: "Buscar en títulos"; text: s.query; onTextEdited: title_search_delay.restart()
-                    Timer { id: title_search_delay; interval: 180; onTriggered: backend.search_titles(parent.text) }
+
+            }
+            Check { objectName: "searchSavedContent"; visible: s.page === "guardados"; text: "Buscar también en el contenido y traducciones guardadas"; checked: s.search_content; Layout.leftMargin: 18; onClicked: backend.set_search_content(checked) }
+            Flickable {
+                objectName: "categoryStrip"; visible: s.page === "feed"
+                Layout.fillWidth: true; Layout.preferredHeight: 44; Layout.leftMargin: 18; Layout.rightMargin: 18
+                clip: true; contentWidth: category_tabs.implicitWidth; contentHeight: height
+                flickableDirection: Flickable.HorizontalFlick; boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.horizontal: ScrollBar {}
+                Row {
+                    id: category_tabs; spacing: 8
+                    Action { text: "Todos"; compact: true; active: !s.category; onClicked: backend.navigate("feed", "", "") }
+                    Repeater {
+                        model: s.categories
+                        delegate: Action {
+                            id: category_tab; required property var modelData
+                            objectName: "category_" + modelData.name
+                            text: modelData.name; favicon: modelData.icon; compact: true; active: s.category === modelData.name
+                            background: Rectangle { radius: 8; color: category_tab.active ? p.selection : category_tab.hovered ? p.hover : p.card; border.color: category_tab.active ? p.forest : p.border }
+                            onClicked: backend.navigate("feed", modelData.name, "")
+                            ReorderArea {
+                                kind: "category"; entry_key: String(category_tab.modelData.index)
+                                onActivate: category_tab.clicked()
+                                onContext: category_tab_menu.popup()
+                                onMoved: from_key => backend.move_category(Number(from_key), category_tab.modelData.index - Number(from_key))
+                            }
+                            Menu { id: category_tab_menu
+                                MenuItem { objectName: "manage_category_" + category_tab.modelData.name; text: "Administrar categoría…"; onTriggered: window.manage_category(category_tab.modelData, null) }
+                            }
+                        }
+                    }
                 }
             }
-            RowLayout {
-                id: interest_strip
-                visible: s.page === "feed" && s.link_sources.length > 0
-                Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 6
-                property bool overflowing: interest_row.implicitWidth > width
-                Action {
-                    text: "‹"; compact: true; visible: interest_strip.overflowing
-                    enabled: interest_links.contentX > 0
-                    Accessible.name: "Fuentes anteriores"
-                    onClicked: interest_links.contentX = Math.max(0, interest_links.contentX-interest_links.width*0.8)
+            Flickable {
+                visible: s.page === "feed" && !!s.category
+                Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.leftMargin: 18; Layout.rightMargin: 18
+                clip: true; contentWidth: category_sources.implicitWidth; contentHeight: height
+                flickableDirection: Flickable.HorizontalFlick; boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.horizontal: ScrollBar {}
+                Row {
+                    id: category_sources; spacing: 6
+                    Repeater {
+                        model: (s.categories.find(c => c.name === s.category) || {sources:[]}).sources
+                        delegate: Action {
+                            required property var modelData
+                            text: modelData.name; favicon: modelData.icon; compact: true; active: s.source === modelData.url
+                            onClicked: modelData.direct_access ? backend.open_url(modelData.url) : backend.navigate("feed", s.category, modelData.url)
+                            TapHandler { acceptedButtons: Qt.RightButton; onTapped: horizontal_source_menu.popup() }
+                            Menu { id: horizontal_source_menu
+                                MenuItem { text: "Administrar fuente…"; onTriggered: window.manage_category(s.categories[modelData.category_index], modelData) }
+                            }
+                        }
+                    }
                 }
-                Flickable {
-                    id: interest_links; Layout.fillWidth: true; Layout.preferredHeight: 34
-                    clip: true; contentWidth: interest_row.implicitWidth; contentHeight: height
-                    flickableDirection: Flickable.HorizontalFlick; boundsBehavior: Flickable.StopAtBounds
-                    onContentWidthChanged: contentX = Math.max(0, Math.min(contentX, contentWidth-width))
-                    onWidthChanged: contentX = Math.max(0, Math.min(contentX, contentWidth-width))
-                    Row {
-                        id: interest_row; spacing: 6
-                        Repeater { model: s.link_sources
+            }
+            ColumnLayout {
+                visible: s.page === "feed" && s.link_sources.length > 0
+                Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                spacing: 4
+                Action {
+                    objectName: "shortcutsToggle"
+                    text: (window.shortcuts_open ? "⌃  " : "⌄  ") + "Atajos web · " + s.link_sources.length
+                    compact: true; active: window.shortcuts_open
+                    onClicked: window.shortcuts_open = !window.shortcuts_open
+                    Accessible.name: window.shortcuts_open ? "Contraer atajos web" : "Desplegar atajos web"
+                }
+                ScrollView {
+                    objectName: "shortcutsPanel"
+                    visible: window.shortcuts_open
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.min(160, shortcut_list.implicitHeight)
+                    clip: true; contentWidth: availableWidth
+                    Column {
+                        id: shortcut_list; width: parent.width; spacing: 4
+                        Repeater {
+                            model: s.link_sources
                             delegate: Action {
-                                id: shortcut_button; objectName: "shortcut_" + modelData.name; required property var modelData
+                                id: shortcut_button; objectName: "shortcut_" + modelData.name
+                                required property var modelData
+                                width: shortcut_list.width
+                                text: modelData.name + " ↗"; favicon: modelData.icon; shortcut: true; compact: true
+                                onClicked: backend.open_url(modelData.url)
                                 ReorderArea {
                                     kind: "shortcut"; entry_key: shortcut_button.modelData.url
                                     onActivate: shortcut_button.clicked()
@@ -573,26 +624,16 @@ ApplicationWindow {
                                     MenuItem { text: "Quitar atajo web"; onTriggered: backend.set_source_shortcut(shortcut_button.modelData.category_index, shortcut_button.modelData.index, "remove") }
                                     MenuItem { text: "Ir a administrar…"; onTriggered: window.manage_category(s.categories[shortcut_button.modelData.category_index], shortcut_button.modelData) }
                                 }
-                                text: modelData.name + " ↗"; favicon: modelData.icon; shortcut: true; compact: true
-                                onClicked: backend.open_url(modelData.url)
-                                ToolTip.visible: hovered
-                                ToolTip.text: "Atajo web · Abrir sitio"
-                                ToolTip.delay: 500
+                                ToolTip.visible: hovered; ToolTip.text: "Abrir sitio en el navegador"; ToolTip.delay: 500
                             }
                         }
                     }
                 }
-                Action {
-                    text: "›"; compact: true; visible: interest_strip.overflowing
-                    enabled: interest_links.contentX < interest_links.contentWidth-interest_links.width-1
-                    Accessible.name: "Fuentes siguientes"
-                    onClicked: interest_links.contentX = Math.max(0, Math.min(interest_links.contentWidth-interest_links.width, interest_links.contentX+interest_links.width*0.8))
-                }
             }
-            Label { text: s.page === "descargas" ? "Descargas · Sin conexión" : s.page === "guardados" ? "Guardados" : s.page === "archivados" ? "Archivados" : s.page === "historial" ? "Historial" : s.page === "retirados" ? "Historial retirado · Recuperable durante 30 días" : s.category; visible: text.length > 0; color: p.accent; font.bold: true; Layout.leftMargin: 18 }
+            Label { textFormat: Text.PlainText; text: s.page === "descargas" ? "Descargas · Sin conexión" : s.page === "guardados" ? "Guardados" : s.page === "archivados" ? "Archivados" : s.page === "historial" ? "Historial" : s.page === "retirados" ? "Historial retirado · Recuperable durante 30 días" : s.category; visible: text.length > 0; color: p.accent; font.bold: true; Layout.leftMargin: 18 }
             RowLayout {
                 visible: s.page === "guardados"; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 8
-                Label { text: "Colección"; color: p.muted }
+                Label { textFormat: Text.PlainText; text: "Colección"; color: p.muted }
                 ComboBox {
                     id: collection_filter; model: s.collections; textRole: "name"; Layout.fillWidth: true
                     currentIndex: Math.max(0, s.collections.findIndex(function(item) { return item.id === s.collection_filter; }))
@@ -602,7 +643,7 @@ ApplicationWindow {
                 Action { text: "Eliminar"; compact: true; visible: s.collection_filter.length > 0; onClicked: backend.delete_collection(s.collection_filter) }
             }
             Action {text: "Abrir sitio de la fuente ↗"; visible:s.source.length>0; Layout.leftMargin:18; compact:true; onClicked:backend.open_url(s.source)}
-            Label {
+            Label { textFormat: Text.PlainText;
                 visible: s.page === "historial"
                 text: "Artículos recibidos, aunque ya no aparezcan en el RSS. Se conservan sus estados; para garantizar la lectura sin conexión, descárgalos."
                 color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -612,17 +653,44 @@ ApplicationWindow {
                 Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 12
                 clip: true; boundsBehavior: Flickable.StopAtBounds
                 property int columns: Math.max(1, Math.min(s.columns, Math.floor(width / 290)))
-                cellWidth: width / columns; cellHeight: columns === 1 ? 510 : 460
+                cellWidth: width / columns; cellHeight: columns === 1 ? 470 : 410
                 cacheBuffer: cellHeight
                 model: backend.articleModel
+                // A model reset reorders/removes cards and resets GridView to the top.
+                // Restore the row offset only while browsing the same list.
+                property string scrollScope: JSON.stringify([s.page, s.category, s.source, s.query, s.collection_filter, s.search_content])
+                property real resetOffset: 0
+                property string resetScope: ""
+                property bool restorePending: false
+                Connections {
+                    target: backend.articleModel
+                    function onModelAboutToBeReset() {
+                        if (!feed_scroll_view.restorePending) {
+                            feed_scroll_view.resetOffset = feed_scroll_view.contentY;
+                            feed_scroll_view.resetScope = feed_scroll_view.scrollScope;
+                            feed_scroll_view.restorePending = true;
+                        }
+                    }
+                    function onModelReset() {
+                        Qt.callLater(feed_scroll_view.restoreAfterReset);
+                    }
+                }
+                function restoreAfterReset() {
+                    if (!restorePending) return;
+                    restorePending = false;
+                    if (resetScope !== scrollScope) return;
+                    forceLayout();
+                    contentY = Math.max(originY, Math.min(resetOffset, originY + Math.max(0, contentHeight - height)));
+                }
                 ScrollBar.vertical: ScrollBar {}
                 Component.onCompleted: Qt.callLater(function(){contentY=Math.max(0, Math.min(window.feed_scroll, contentHeight-height));})
-                Label { text: s.busy ? "Cargando artículos e imágenes…" : s.query ? "No hay títulos que coincidan." : "No hay artículos en esta sección."; visible: feed_scroll_view.count === 0; color: p.muted; width: parent.width; padding: 20; wrapMode: Text.Wrap }
+                Label { textFormat: Text.PlainText; text: s.busy ? "Cargando artículos e imágenes…" : s.query ? "No hay títulos que coincidan." : "No hay artículos en esta sección."; visible: feed_scroll_view.count === 0; color: p.muted; width: parent.width; padding: 20; wrapMode: Text.Wrap }
                 delegate: Rectangle {
                     objectName: "feedCard"
                     id: card; required property var modelData
-                    width: feed_scroll_view.cellWidth - 8; height: feed_scroll_view.cellHeight - 8; color: card_hover.hovered ? (p.light ? "#dfe2e5" : "#292e35") : p.card; radius: 2
-                    border.color: p.border; border.width: 1
+                    width: feed_scroll_view.cellWidth - 8; height: feed_scroll_view.cellHeight - 8; color: card_hover.hovered ? (p.light ? "#dfe2e5" : "#292e35") : p.card; radius: 10
+                    border.color: card_hover.hovered ? p.accent : p.border; border.width: card_hover.hovered ? 2 : 1
+                    Behavior on border.color { ColorAnimation { duration: 150 } }
                     Behavior on color { ColorAnimation { duration: 150; easing.type: Easing.OutCubic } }
                     Rectangle {
                         anchors.fill: parent; radius: parent.radius; z: 1
@@ -662,11 +730,11 @@ ApplicationWindow {
                             Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 12; spacing: 8
                             RadarBadge { article: card.modelData }
                             RowLayout { Layout.fillWidth: true
-                                Label { text: card.modelData.source; color: p.accent; font.bold: true; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Label { text: card.modelData.date; color: p.muted; font.pixelSize: 10 }
+                                Label { textFormat: Text.PlainText; text: card.modelData.source; color: p.light ? p.forest : p.text; font.bold: true; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Label { textFormat: Text.PlainText; text: card.modelData.date; color: p.muted; font.pixelSize: 10 }
                             }
-                            Label { text: "WEB · Publicación extraída"; visible: !!card.modelData.web_extracted; color: p.accent; font.pixelSize: 10; Layout.fillWidth: true }
-                            Text { text: card.modelData.title_html; Layout.maximumHeight: font.pixelSize * 5; clip: true; textFormat: Text.RichText; color: card.modelData.seen || card.modelData.dismissed ? p.muted : p.text; font.pixelSize: feed_scroll_view.columns === 1 ? 15 : 13; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            Label { textFormat: Text.PlainText; text: "WEB · Publicación extraída"; visible: !!card.modelData.web_extracted; color: p.accent; font.pixelSize: 10; Layout.fillWidth: true }
+                            Text { text: card.modelData.title_html; Layout.maximumHeight: font.pixelSize * 5; clip: true; textFormat: Text.RichText; color: card.modelData.seen || card.modelData.dismissed ? p.muted : p.text; font.bold: true; font.pixelSize: feed_scroll_view.columns === 1 ? 17 : 15; wrapMode: Text.Wrap; Layout.fillWidth: true }
                             RowLayout { visible: card.modelData.show_translation && card.modelData.translation.length > 0; Layout.fillWidth: true; spacing: 6
                                 Rectangle { width: 16; height: 16; radius: 8; color: "#c9293b"; Layout.alignment: Qt.AlignTop
                                     Rectangle { anchors.centerIn: parent; width: 15; height: 7; radius: 1; color: "#f6c645" }
@@ -674,7 +742,7 @@ ApplicationWindow {
                                 Text { text: card.modelData.translation_html; Layout.maximumHeight: font.pixelSize * 5; clip: true; textFormat: Text.RichText; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; font.pixelSize: 13 }
                             }
                             Action { visible: s.page === "retirados"; text: "Recuperar historial"; active: true; Layout.fillWidth: true; onClicked: backend.restore_history(card.modelData.link) }
-                            Label { visible: card.modelData.dismissed; text: "Descartado · No me interesa"; color: p.muted; font.bold: true; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            Label { textFormat: Text.PlainText; visible: card.modelData.dismissed; text: "Descartado · No me interesa"; color: p.muted; font.bold: true; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
                             Item { Layout.fillHeight: true; Layout.minimumHeight: 0 }
                             Item { Layout.fillWidth: true; Layout.preferredHeight: 34 }
                         }
@@ -695,6 +763,47 @@ ApplicationWindow {
             property int mark_anchor: 0
             property int menu_position: 0
             property string selected_quote: ""
+            property int quote_parts_target: 0
+            property var quote_parts: []
+            property string quote_selection: article_text.selectedText.replace(/\u2029/g, "\n").trim()
+            property string quote_joiner: "\n\n[…]\n\n"
+            property int quote_used: Array.from(quote_selection).length + quote_parts.reduce((n,p) => n + Array.from(p.text).length, 0) + (quote_parts.length ? Array.from(quote_joiner).length : 0)
+            property bool quote_overlap: quote_parts.some(p => article_text.selectionStart < p.end && article_text.selectionEnd > p.start)
+            function begin_quote(parts) {
+                marking = false; erasing = false; quote_parts = []; quote_parts_target = parts;
+                article_text.deselect();
+            }
+            function accept_quote_part() {
+                if (!quote_selection || quote_overlap || quote_used > 500) return;
+                if (quote_parts_target === 2 && quote_parts.length === 0 && quote_used > 492) return;
+                const parts = quote_parts.concat([{text:quote_selection, start:article_text.selectionStart, end:article_text.selectionEnd}]);
+                if (parts.length < quote_parts_target) {
+                    quote_parts = parts; article_text.deselect(); return;
+                }
+                parts.sort((a,b) => a.start-b.start);
+                const text = parts.map(p => p.text).join(quote_joiner);
+                quote_parts_target = 0; quote_parts = []; article_text.deselect();
+                backend.prepare_quote(text); quote_dialog.open();
+            }
+            Rectangle {
+                parent: Overlay.overlay
+                objectName: "quoteSelectionPanel"
+                visible: reader_scroll.quote_parts_target > 0
+                anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter; anchors.topMargin: 8
+                width: Math.min(700, parent.width - 24); height: quote_selection_controls.implicitHeight + 20
+                color: p.panel; border.color: p.accent; radius: 10; z: 100
+                ColumnLayout {
+                    id: quote_selection_controls; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 10; spacing: 6
+                    Label { textFormat: Text.PlainText; text: "Cita · Parte " + (reader_scroll.quote_parts.length + 1) + " de " + reader_scroll.quote_parts_target + " · Arrastra para seleccionar el pasaje"; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    Label { textFormat: Text.PlainText; objectName: "quoteRemaining"; text: reader_scroll.quote_overlap ? "Selecciona un pasaje distinto, sin superponerlo al anterior." : (500 - reader_scroll.quote_used) + " caracteres disponibles de 500 (incluye […] entre partes)"; color: reader_scroll.quote_used > 500 || reader_scroll.quote_overlap ? p.danger : p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    Label { textFormat: Text.PlainText; visible: reader_scroll.quote_parts.length > 0; text: "Primera parte guardada. Puedes desplazarte hasta el segundo pasaje."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    RowLayout {
+                        Action { objectName: "confirmQuotePart"; text: reader_scroll.quote_parts_target === 2 && reader_scroll.quote_parts.length === 0 ? "Guardar primera parte" : "Crear imagen"; enabled: !!reader_scroll.quote_selection && !reader_scroll.quote_overlap && reader_scroll.quote_used <= (reader_scroll.quote_parts_target === 2 && !reader_scroll.quote_parts.length ? 492 : 500); onClicked: reader_scroll.accept_quote_part() }
+                        Action { text: "Cancelar"; onClicked: { reader_scroll.quote_parts_target = 0; reader_scroll.quote_parts = []; article_text.deselect(); } }
+                    }
+                }
+            }
+
             ColumnLayout {
                 id: reader_content
                 width: window.reading_mode ? Math.min(960, reader_scroll.availableWidth) : reader_scroll.availableWidth
@@ -740,9 +849,9 @@ ApplicationWindow {
                     IconAction { objectName: "readerDismiss"; Layout.alignment: Qt.AlignRight | Qt.AlignBottom; kind: "dismiss"; stateActive: !!s.reader.dismissed; hint: s.reader.dismissed ? "Deshacer descarte" : "No me interesa · Volver al feed"; onClicked: backend.toggle_dismissed(s.reader.link) }
                 }
                 Action { text: "Colecciones"; visible: s.reader.saved && !window.reading_mode; compact: true; Layout.leftMargin: 18; onClicked: { article_collections.article_link=s.reader.link; article_collections.open(); } }
-                Label { text: "WEB · Publicación extraída del sitio"; visible: !!s.reader.web_extracted; color: p.accent; Layout.leftMargin: 22 }
+                Label { textFormat: Text.PlainText; text: "WEB · Publicación extraída del sitio"; visible: !!s.reader.web_extracted; color: p.accent; Layout.leftMargin: 22 }
                 SectionTitle { text: s.reader.title || ""; font.pixelSize: 23; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
-                Label { visible: !window.reading_mode || reader_scroll.marking || !s.reader.ready; text: (reader_scroll.marking ? reader_scroll.erasing ? "Borrador activo · Haz clic o arrastra para quitar bloques destacados completos. " : "Destacador activo · Arrastra para pintar; repasar conserva el destacado. " : "") + (s.reader.status || ""); color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
+                Label { textFormat: Text.PlainText; visible: !window.reading_mode || reader_scroll.marking || !s.reader.ready; text: (reader_scroll.marking ? reader_scroll.erasing ? "Borrador activo · Haz clic o arrastra para quitar bloques destacados completos. " : "Destacador activo · Arrastra para pintar; repasar conserva el destacado. " : "") + (s.reader.status || ""); color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 22 }
                 TextEdit {
                     id: article_text; objectName: "article_text"; Layout.fillWidth: true; Layout.leftMargin: 22; Layout.rightMargin: 66
                     Layout.bottomMargin: 28
@@ -814,19 +923,19 @@ ApplicationWindow {
                             width: 32; height: 32; radius: 3; rotation: -3
                             color: modelData.note.color; border.color: Qt.darker(color, 1.2)
                             Rectangle { anchors.right: parent.right; anchors.bottom: parent.bottom; width: 8; height: 8; color: Qt.darker(parent.color, 1.15) }
-                            Text { anchors.centerIn: parent; text: "≡"; color: "#443d30"; font.pixelSize: 23 }
+                            Text { textFormat: Text.PlainText; anchors.centerIn: parent; text: "≡"; color: "#443d30"; font.pixelSize: 23 }
                             MouseArea {
                                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
                                 onClicked: note_editor.show_note(parent.modelData.note)
                                 ToolTip.visible: containsMouse; ToolTip.delay: 350
-                                ToolTip.text: parent.modelData.note.text.slice(0, 180) || "Abrir nota"
+                                ToolTip.text: "<span>" + (parent.modelData.note.text.slice(0, 180) || "Abrir nota").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</span>"
                             }
                             Accessible.name: "Abrir nota: " + modelData.note.text.slice(0, 80)
                         }
                     }
                     property string attached_text: ""
                     property string document_identity: (s.reader.link || "") + (s.reader.translated ? "|es" : "|original")
-                    onDocument_identityChanged: Qt.callLater(function(){backend.attach_document(article_text.textDocument);})
+                    onDocument_identityChanged: { reader_scroll.quote_parts_target = 0; reader_scroll.quote_parts = []; Qt.callLater(function(){backend.attach_document(article_text.textDocument);}); }
                     onTextChanged: {
                         if (text !== attached_text) {
                             attached_text = text;
@@ -882,7 +991,8 @@ ApplicationWindow {
                         MenuSeparator {}
                         MenuItem { objectName: "createArticleNote"; text: "Añadir nota aquí…"; enabled: s.reader.ready; onTriggered: { const note = backend.create_note(reader_scroll.menu_position); if (note.id) note_editor.show_note(note); } }
                         MenuItem { text: "Guardar punto de lectura aquí"; onTriggered: backend.save_reading_position(reader_scroll.menu_position) }
-                        MenuItem { text: "Crear imagen de la cita…"; enabled: reader_scroll.selected_quote.length > 0; onTriggered: {backend.prepare_quote(reader_scroll.selected_quote);if(reader_scroll.selected_quote.length<=500)quote_dialog.open();} }
+                        MenuItem { objectName: "startSingleQuote"; text: "Crear cita: seleccionar un pasaje…"; enabled: s.reader.ready; onTriggered: reader_scroll.begin_quote(1) }
+                        MenuItem { objectName: "startDoubleQuote"; text: "Crear cita: combinar dos pasajes…"; enabled: s.reader.ready; onTriggered: reader_scroll.begin_quote(2) }
                         Menu {
                             objectName: "markerMenu"; title: "Destacador"; width: Math.min(310, window.width - 40)
                             Repeater { model: s.marker_colors
@@ -894,7 +1004,7 @@ ApplicationWindow {
                                     contentItem: RowLayout {
                                         spacing: 8
                                         Rectangle { color: modelData.color; border.color: "#777777"; radius: 3; Layout.preferredWidth: 18; Layout.preferredHeight: 18 }
-                                        Text { text: modelData.name; color: marker_option.highlighted ? marker_option.palette.highlightedText : marker_option.palette.text; font.pixelSize: 13; Layout.fillWidth: true }
+                                        Text { textFormat: Text.PlainText; text: modelData.name; color: marker_option.highlighted ? marker_option.palette.highlightedText : marker_option.palette.text; font.pixelSize: 13; Layout.fillWidth: true }
                                     }
                                     onTriggered: {
                                         reader_scroll.marker_color = modelData.color;
@@ -930,10 +1040,167 @@ ApplicationWindow {
                     search_count.text = body_search.text.length ? count + " coincidencias" : "";
                 }
             }
-            Label { id: search_count; visible: !window.reading_mode; color: p.muted; font.pixelSize: 10; anchors.right: parent.right; anchors.top: parent.top }
+            Label { textFormat: Text.PlainText; id: search_count; visible: !window.reading_mode; color: p.muted; font.pixelSize: 10; anchors.right: parent.right; anchors.top: parent.top }
         }
     }
 
+    Component {
+        id: forest_page
+        ColumnLayout {
+            id: forest_review
+            property string selected_url: ""
+            property var rows: s.forest.rows
+            property int current_index: Math.max(0, rows.findIndex(r => r.url === selected_url))
+            property var current: rows.length ? rows[current_index] : null
+            function move(delta) {
+                if (rows.length) selected_url = rows[(current_index + delta + rows.length) % rows.length].url;
+                forest_scroll.contentItem.contentY = 0;
+            }
+            function decide(action) {
+                if (!current) return;
+                const url = current.url;
+                move(1);
+                backend.forest_action(url, action);
+            }
+            function average(key) {
+                return rows.length ? rows.reduce((sum,r) => sum + r[key], 0) / rows.length : 0;
+            }
+            spacing: 8
+            RowLayout {
+                Layout.fillWidth: true; Layout.margins: 10
+                SectionTitle { text: "El Bosque · Cuida tus fuentes"; Layout.fillWidth: true }
+                Action { objectName: "forestExit"; text: "Salir de El Bosque"; onClicked: backend.navigate("feed", "", "") }
+            }
+            Label { textFormat: Text.PlainText; text: "Revisa una fuente, compara su aporte y decide si quieres conservarla. " + s.forest.pending + " pendientes de revisión."; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+            Label { textFormat: Text.PlainText; text: "Datos locales desde " + s.forest.started + ". Sin actividad registrada no significa falta de relevancia."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                ComboBox {
+                    objectName: "forestPeriod"
+                    property var periods: ["", (new Date().getFullYear() + "-" + String(new Date().getMonth()+1).padStart(2,"0"))].concat(s.forest.months).filter((v,i,a) => a.indexOf(v) === i)
+                    model: periods.map(v => v || "Histórico")
+                    currentIndex: Math.max(0, periods.indexOf(s.forest_month))
+                    onActivated: backend.forest_filter(periods[currentIndex], s.forest_sort)
+                }
+                ComboBox {
+                    objectName: "forestSort"; Layout.preferredWidth: 240; Layout.maximumWidth: 240
+                    property var keys: ["review", "received", "quiet", "opened", "highlighted", "quoted", "matched", "saved", "dismissed", "irrelevant", "unopened"]
+                    model: ["Para revisar", "Más artículos recibidos", "Menos artículos recibidos", "Más abiertos", "Más destacados", "Más citas exportadas", "Más coincidencias Radar", "Más favoritos", "Más descartados", "Menor proporción Radar", "Menos abiertos"]
+                    currentIndex: Math.max(0, keys.indexOf(s.forest_sort))
+                    onActivated: backend.forest_filter(s.forest_month, keys[currentIndex])
+                }
+                Item { Layout.fillWidth: true }
+            }
+            RowLayout {
+                Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                Action { objectName: "forestPrevious"; text: "‹ Anterior"; enabled: forest_review.rows.length > 1; onClicked: forest_review.move(-1) }
+                Label { textFormat: Text.PlainText; text: forest_review.rows.length ? "Fuente " + (forest_review.current_index + 1) + " de " + forest_review.rows.length : "Sin fuentes"; color: p.muted; horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true }
+                Action { objectName: "forestNext"; text: "Siguiente ›"; enabled: forest_review.rows.length > 1; onClicked: forest_review.move(1) }
+            }
+            ScrollView {
+                id: forest_scroll; objectName: "forestList"; Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 10
+                clip: true; contentWidth: availableWidth
+                ColumnLayout {
+                    width: forest_scroll.availableWidth; spacing: 14
+                    Label { textFormat: Text.PlainText; visible: !forest_review.current; text: "Añade fuentes para empezar a cuidar tu Bosque."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                    Rectangle {
+                        visible: !!forest_review.current
+                        Layout.fillWidth: true; implicitHeight: forest_card.implicitHeight + 24
+                        color: p.card; border.color: p.border; radius: 10
+                        ColumnLayout {
+                            id: forest_card; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 12; spacing: 8
+                            property var entry: forest_review.current || ({name:"", url:"", review:"", reason:"", matched:0, evaluated:0, radar:"Sin evaluar"})
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 8
+                                Image { objectName: "forestSourceIcon"; source: forest_card.entry.icon || ""; Layout.preferredWidth: 32; Layout.preferredHeight: 32; fillMode: Image.PreserveAspectFit; smooth: true
+                                    Label { textFormat: Text.PlainText; anchors.centerIn: parent; visible: parent.status !== Image.Ready; text: (forest_card.entry.name || "?").charAt(0).toUpperCase(); color: p.accent; font.pixelSize: 24 }
+                                }
+                                Label { textFormat: Text.PlainText; objectName: "forestSourceName"; text: forest_card.entry.name; color: p.text; font.pixelSize: 22; font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            }
+                            Label { textFormat: Text.PlainText; text: forest_card.entry.url; color: p.muted; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                            Label { textFormat: Text.PlainText; text: forest_card.entry.review; color: p.accent; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            Label { textFormat: Text.PlainText; text: "Esta fuente y el promedio de tus " + forest_review.rows.length + " fuentes"; color: p.text; font.bold: true; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            Label { textFormat: Text.PlainText; text: "Barra gruesa: esta fuente · Fina: promedio de todas, incluidos los ceros. Mismo período."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            GridLayout {
+                                id: forest_metrics; objectName: "forestMetrics"
+                                Layout.fillWidth: true; columns: width >= 700 ? 4 : width >= 540 ? 3 : 2
+                                columnSpacing: 12; rowSpacing: 12
+                                Repeater {
+                                    model: [{key:"received",label:"Artículos recibidos"},{key:"opened",label:"Abiertos"},{key:"highlighted",label:"Destacados"},{key:"saved",label:"Favoritos"},{key:"quoted",label:"Citas exportadas"},{key:"matched",label:"Coincidencias Radar"},{key:"dismissed",label:"No me interesa"}]
+                                    delegate: Rectangle {
+                                        id: metric_card; required property var modelData
+                                        Layout.fillWidth: true; Layout.preferredWidth: 1; implicitHeight: metric_content.implicitHeight + 16
+                                        color: p.panel; radius: 8; border.color: p.border
+                                        property real value: forest_card.entry[modelData.key] || 0
+                                        property real mean: forest_review.average(modelData.key)
+                                        property real maximum: Math.max(1, ...forest_review.rows.map(r => r[modelData.key]))
+                                        property bool has_data: forest_review.rows.some(r => r[modelData.key] > 0)
+                                        property int comparison: !has_data ? 0 : value > mean * 1.2 ? 1 : value < mean * 0.8 ? -1 : 0
+                                        property int sentiment: modelData.key === "dismissed" ? -comparison : comparison
+                                        property string assessment: !has_data ? "Sin actividad registrada para comparar" : comparison === 0 ? "Cerca del promedio (±20 %)" : (comparison > 0 ? "Por encima del promedio" : "Por debajo del promedio") + (modelData.key === "dismissed" ? " · Menos descartes es favorable" : " · Mayor actividad es favorable")
+                                        ColumnLayout {
+                                            id: metric_content; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 8; spacing: 3
+                                            Label { textFormat: Text.PlainText; text: metric_card.modelData.label; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                Label { textFormat: Text.PlainText; text: metric_card.value; color: p.text; font.pixelSize: 22; font.bold: true; Layout.fillWidth: true }
+                                                Label { textFormat: Text.PlainText;
+                                                    objectName: "forestMood_" + metric_card.modelData.key
+                                                    text: metric_card.sentiment > 0 ? "😄" : metric_card.sentiment < 0 ? "😴" : "😐"
+                                                    font.pixelSize: 20; font.bold: true
+                                                    padding: 5
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    background: Rectangle {
+                                                        radius: 8
+                                                        color: metric_card.sentiment > 0 ? (p.light ? "#e0f0e3" : "#243d2c") : metric_card.sentiment < 0 ? (p.light ? "#f8e3e1" : "#472c2c") : (p.light ? "#e1edf9" : "#25394d")
+                                                        border.color: metric_card.sentiment > 0 ? (p.light ? "#75a981" : "#527c5f") : metric_card.sentiment < 0 ? (p.light ? "#d59b95" : "#97625d") : (p.light ? "#8ab0d4" : "#557b9f")
+                                                    }
+                                                    color: metric_card.sentiment > 0 ? (p.light ? "#397342" : "#8fc99b") : metric_card.sentiment < 0 ? (p.light ? "#a64545" : "#e4a09a") : p.muted
+                                                    Accessible.name: metric_card.modelData.label + ": " + metric_card.assessment
+                                                    HoverHandler { id: mood_hover }
+                                                    ToolTip.visible: mood_hover.hovered
+                                                    ToolTip.text: metric_card.assessment
+                                                }
+                                            }
+                                            Label { textFormat: Text.PlainText; text: "Promedio: " + metric_card.mean.toFixed(1); color: p.muted }
+                                            Rectangle { Layout.fillWidth: true; height: 7; radius: 3; color: p.hover
+                                                Rectangle { width: parent.width * metric_card.value / metric_card.maximum; height: parent.height; radius: 3; color: p.accent }
+                                            }
+                                            Rectangle { Layout.fillWidth: true; height: 4; radius: 2; color: p.hover
+                                                Rectangle { width: parent.width * metric_card.mean / metric_card.maximum; height: parent.height; radius: 2; color: p.muted }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Label { textFormat: Text.PlainText; text: "Afinidad Radar: " + forest_card.entry.radar + " · " + forest_card.entry.matched + " de " + forest_card.entry.evaluated + " evaluados. Sin evaluar no equivale a cero coincidencias."; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            Label { textFormat: Text.PlainText; text: forest_card.entry.reason; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                            Label { textFormat: Text.PlainText; text: "Recibidos: nuevos detectados. Cifras: artículos distintos. Citas: exportadas, no necesariamente compartidas."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+
+                        }
+                    }
+                }
+            }
+            Flow {
+                visible: !!forest_review.current; Layout.leftMargin: 18; Layout.rightMargin: 18
+                                Layout.fillWidth: true; spacing: 6
+                                Action { text: "Conservar y seguir"; onClicked: forest_review.decide("keep") }
+                                Action { text: "Posponer 30 días"; onClicked: forest_review.decide("later") }
+                                Action { text: "Ver artículos"; onClicked: backend.navigate("feed", "", forest_card.entry.url) }
+                                Action { text: "Revisar ahora"; visible: !forest_card.entry.pending; onClicked: backend.forest_action(forest_card.entry.url, "reset") }
+                                Action { text: "Eliminar fuente…"; warning: true; onClicked: { forest_delete.source_url = forest_card.entry.url; forest_delete.open(); } }
+                            }
+            Label { textFormat: Text.PlainText; visible: !!forest_review.current; Layout.leftMargin: 18; Layout.rightMargin: 18; text: "Conservar o posponer aplaza la revisión 30 días y pasa a la siguiente fuente. Seguirás recibiendo sus artículos."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+        }
+    }
+    Dialog {
+        id: forest_delete; objectName: "forestDeleteDialog"; anchors.centerIn: parent; modal: true
+        title: "Eliminar fuente"; width: Math.min(480, window.width - 40)
+        property string source_url: ""
+        standardButtons: Dialog.Yes | Dialog.Cancel
+        Label { textFormat: Text.PlainText; width: parent.width; text: "Se quitará esta fuente de todas sus categorías. Los artículos guardados y las estadísticas se conservan. ¿Continuar?"; color: p.text; wrapMode: Text.Wrap }
+        onAccepted: backend.forest_action(source_url, "delete")
+    }
     Component {
         id: about_page
         ScrollView {
@@ -945,33 +1212,33 @@ ApplicationWindow {
                     Image { source: s.logo; Layout.preferredWidth: 64; Layout.preferredHeight: 64; fillMode: Image.PreserveAspectFit }
                     ColumnLayout {
                         SectionTitle { text: s.about.name; font.pixelSize: 24 }
-                        Label { text: "Versión " + s.about.version + " · " + s.about.stage; color: p.accent }
+                        Label { textFormat: Text.PlainText; text: "Versión " + s.about.version + " · " + s.about.stage; color: p.accent }
                     }
                 }
-                Label { text: s.about.description; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
-                Label { text: "Autor: " + s.about.author + "\n" + s.about.location + " · GitHub: " + s.about.github; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
-                Label { text: "Licencia de Choroy Reader: " + s.about.license; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { textFormat: Text.PlainText; text: s.about.description; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { textFormat: Text.PlainText; text: "Autor: " + s.about.author + "\n" + s.about.location + " · GitHub: " + s.about.github; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { textFormat: Text.PlainText; text: "Licencia de Choroy Reader: " + s.about.license; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
                 Flow {
                     Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 6
                     Action { text: "Repositorio ↗"; active: true; onClicked: backend.open_url(s.about.repository) }
                     Action { text: "Reportar un error ↗"; active: true; onClicked: backend.open_url(s.about.issues) }
                 }
                 SectionTitle { text: "Actualizaciones"; Layout.leftMargin: 18 }
-                Label { objectName: "updateStatus"; text: s.updates.message; textFormat: Text.PlainText; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { textFormat: Text.PlainText; objectName: "updateStatus"; text: s.updates.message; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
                 Flow {
                     Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 6
                     Action { objectName: "checkUpdates"; text: s.updates.busy ? "Buscando…" : "Buscar actualizaciones"; enabled: !s.updates.busy; onClicked: backend.check_updates() }
                     Action { text: "Descargar nueva versión ↗"; visible: s.updates.available; onClicked: backend.open_url(s.updates.url) }
                 }
-                Label { visible: s.updates.available; text: "Descarga el instalador desde la publicación. Cierra Choroy Reader e instala el nuevo paquete para actualizar conservando tu biblioteca."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
-                Label { visible: s.updates.available && s.updates.notes.length > 0; text: s.updates.notes; textFormat: Text.PlainText; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { textFormat: Text.PlainText; visible: s.updates.available; text: "Descarga el instalador desde la publicación. Cierra Choroy Reader e instala el nuevo paquete para actualizar conservando tu biblioteca."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { textFormat: Text.PlainText; visible: s.updates.available && s.updates.notes.length > 0; text: s.updates.notes; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
                 SectionTitle { text: "Créditos"; Layout.leftMargin: 18 }
                 Repeater {
                     model: s.about.credits
-                    Label { required property string modelData; text: modelData; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                    Label { textFormat: Text.PlainText; required property string modelData; text: modelData; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
                 }
                 SectionTitle { text: "Dependencias y licencias"; Layout.leftMargin: 18 }
-                Label { text: "Avisos incluidos con esta versión. Pulsa una dependencia para leer los textos sin conexión."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { textFormat: Text.PlainText; text: "Avisos incluidos con esta versión. Pulsa una dependencia para leer los textos sin conexión."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
                 Repeater {
                     model: s.about.dependencies
                     delegate: Rectangle {
@@ -997,7 +1264,7 @@ ApplicationWindow {
             ColumnLayout {
                 width: storage_scroll.availableWidth; spacing: 14
                 SectionTitle { text: "Almacenamiento"; Layout.margins: 18 }
-                Label {
+                Label { textFormat: Text.PlainText;
                     text: "Revisa qué ocupa espacio en Choroy Reader y libera solo archivos que la aplicación puede recrear.";
                     color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
                 }
@@ -1006,10 +1273,10 @@ ApplicationWindow {
                     implicitHeight: storage_totals.implicitHeight + 24; radius: 10; color: p.panel; border.color: p.border
                     ColumnLayout {
                         id: storage_totals; anchors.fill: parent; anchors.margins: 12; spacing: 4
-                        Label { text: "Datos del usuario"; color: p.muted; font.pixelSize: 11 }
-                        Label { text: s.storage.user_total; color: p.accent; font.pixelSize: 24; font.bold: true }
-                        Label { text: s.storage.data_path; color: p.text; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true; textFormat: Text.PlainText }
-                        Label { text: s.storage.installation_shared ? "Esta ejecución comparte carpeta con sus datos; por eso no se suma una instalación separada." : "Los archivos de instalación se conservan aparte: " + s.storage.installation_total; color: p.muted; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                        Label { textFormat: Text.PlainText; text: "Datos del usuario"; color: p.muted; font.pixelSize: 11 }
+                        Label { textFormat: Text.PlainText; text: s.storage.user_total; color: p.accent; font.pixelSize: 24; font.bold: true }
+                        Label { textFormat: Text.PlainText; text: s.storage.data_path; color: p.text; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                        Label { textFormat: Text.PlainText; text: s.storage.installation_shared ? "Esta ejecución comparte carpeta con sus datos; por eso no se suma una instalación separada." : "Los archivos de instalación se conservan aparte: " + s.storage.installation_total; color: p.muted; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
                     }
                 }
                 SectionTitle { text: "Uso de datos"; Layout.leftMargin: 18 }
@@ -1029,15 +1296,15 @@ ApplicationWindow {
                             id: storage_row; anchors.fill: parent; anchors.margins: 9; spacing: 10
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
-                                Label { text: modelData.name; color: p.text; font.bold: true }
-                                Label { text: modelData.detail; color: p.muted; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                                Label { textFormat: Text.PlainText; text: modelData.name; color: p.text; font.bold: true }
+                                Label { textFormat: Text.PlainText; text: modelData.detail; color: p.muted; font.pixelSize: 11; wrapMode: Text.Wrap; Layout.fillWidth: true }
                             }
-                            Label { text: modelData.value; color: p.accent; font.bold: true; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
+                            Label { textFormat: Text.PlainText; text: modelData.value; color: p.accent; font.bold: true; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
                         }
                     }
                 }
                 SectionTitle { text: "Limpieza segura"; Layout.leftMargin: 18; Layout.topMargin: 4 }
-                Label {
+                Label { textFormat: Text.PlainText;
                     text: s.storage.recoverable_bytes > 0 ? "Puedes recuperar aproximadamente " + s.storage.recoverable + ". Se conservarán tus fuentes, configuración, artículos, descargas y base de datos." : "No hay caché regenerable para limpiar.";
                     color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
                 }
@@ -1046,7 +1313,7 @@ ApplicationWindow {
                     Action { text: "Actualizar tamaños"; Layout.fillWidth: true; onClicked: backend.refresh_storage() }
                     Action { text: "Limpiar caché (" + s.storage.recoverable + ")"; active: true; enabled: s.storage.recoverable_bytes > 0; Layout.fillWidth: true; onClicked: clear_cache_dialog.open() }
                 }
-                Label { text: (s.storage.installation_shared ? "Carpeta compartida: " : "Instalación: ") + s.storage.installation_path; color: p.muted; font.pixelSize: 10; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { textFormat: Text.PlainText; text: (s.storage.installation_shared ? "Carpeta compartida: " : "Instalación: ") + s.storage.installation_path; color: p.muted; font.pixelSize: 10; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
                 Item { Layout.preferredHeight: 18 }
             }
         }
@@ -1055,7 +1322,7 @@ ApplicationWindow {
         id: clear_cache_dialog; objectName: "clearCacheDialog"; anchors.centerIn: parent; modal: true
         width: Math.min(520, window.width - 40); title: "Limpiar caché"
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
-        contentItem: Label {
+        contentItem: Label { textFormat: Text.PlainText;
             text: "Se eliminarán " + s.storage.recoverable + " de imágenes, favicons y archivos temporales que Choroy Reader puede descargar o generar de nuevo. Tus artículos, descargas, fuentes y configuración no se modificarán.";
             color: p.text; wrapMode: Text.Wrap; padding: 18
         }
@@ -1071,7 +1338,7 @@ ApplicationWindow {
         width: Math.min(760, window.width - 40); height: Math.min(580, window.height - 40)
         title: s.notice_title
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
-        header: Label { text: license_dialog.title; color: p.text; font.bold: true; padding: 16 }
+        header: Label { textFormat: Text.PlainText; text: license_dialog.title; color: p.text; font.bold: true; padding: 16 }
         contentItem: ScrollView {
             id: license_scroll; clip: true; contentWidth: availableWidth
             TextArea { width: license_scroll.availableWidth; text: s.notice_body; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: p.text; selectionColor: p.accent; selectedTextColor: p.accent_text; background: Item {} }
@@ -1085,7 +1352,7 @@ ApplicationWindow {
             ColumnLayout { width: design_scroll.availableWidth; spacing: 16
                 SectionTitle { text: "Diseño"; Layout.margins: 18 }
                 RowLayout { Layout.leftMargin: 18
-                    Label { text: "Tamaño de letra predeterminado"; color: p.text }
+                    Label { textFormat: Text.PlainText; text: "Tamaño de letra predeterminado"; color: p.text }
                     ComboBox {
                         objectName: "defaultReaderFontSize"
                         model: ["Pequeña · 14", "Mediana · 16", "Grande · 20", "Muy grande · 24"]
@@ -1096,7 +1363,7 @@ ApplicationWindow {
                 Check { text: "Mostrar imágenes dentro de los artículos"; checked: s.show_images; Layout.leftMargin: 18; onClicked: backend.set_design(s.columns,checked,s.translate_titles) }
                 Check { text: "Mostrar traducción de los títulos"; checked: s.translate_titles; Layout.leftMargin: 18; onClicked: backend.set_design(s.columns,s.show_images,checked) }
                 RowLayout { Layout.leftMargin: 18
-                    Label { text: "Artículos por fila (máximo)"; color: p.text }
+                    Label { textFormat: Text.PlainText; text: "Artículos por fila (máximo)"; color: p.text }
                     SpinBox { from: 1; to: 5; value: s.columns; onValueModified: backend.set_design(value,s.show_images,s.translate_titles) }
                 }
                 SectionTitle { text: "Tema"; Layout.leftMargin: 18 }
@@ -1104,11 +1371,11 @@ ApplicationWindow {
                     Repeater { model: s.themes
                         delegate: Button { required property var modelData; text: modelData.name; onClicked: backend.set_theme(modelData.key); padding: 12
                             background: Rectangle { radius: 6; color: modelData.key === "periodico" ? "#e6e6e6" : "#232323"; border.width: s.theme === modelData.key ? 2 : 1; border.color: modelData.color }
-                            contentItem: Text { text: parent.text; color: modelData.color }
+                            contentItem: Text { textFormat: Text.PlainText; text: parent.text; color: modelData.color }
                         }
                     }
                 }
-                Label { text: "Las fuentes se actualizan al iniciar y al pulsar Actualizar feed."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.margins: 18 }
+                Label { textFormat: Text.PlainText; text: "Las fuentes se actualizan al iniciar y al pulsar Actualizar feed."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.margins: 18 }
             }
         }
     }
@@ -1117,7 +1384,7 @@ ApplicationWindow {
         ScrollView { id: radar_scroll; clip: true; contentWidth: availableWidth
             ColumnLayout { width: radar_scroll.availableWidth; spacing: 14
                 SectionTitle { text: "Radar de intereses"; Layout.margins: 18 }
-                Label { text: "El radar busca tus intereses en los títulos y el contenido, y coloca primero los artículos más relevantes. Actívalo desde la barra lateral.\n\n◎ Un interés · ◎◎ Dos · ◎◎◎ Tres o más"; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
+                Label { textFormat: Text.PlainText; text: "El radar busca tus intereses en los títulos y el contenido, y coloca primero los artículos más relevantes. Actívalo desde la barra lateral.\n\n◎ Un interés · ◎◎ Dos · ◎◎◎ Tres o más"; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18 }
                 Check {
                     objectName: "radarBilingualToggle"
                     text: "Buscar también en inglés y español"; checked: s.radar_bilingual
@@ -1125,7 +1392,7 @@ ApplicationWindow {
                     Layout.maximumWidth: radar_scroll.availableWidth - 36
                     onClicked: backend.set_radar_bilingual(checked)
                 }
-                Label {
+                Label { textFormat: Text.PlainText;
                     visible: s.radar_bilingual
                     text: s.radar_translating ? "Buscando equivalencias…" : "Las equivalencias aparecen junto a cada interés. Pulsa una etiqueta para editarlas."
                     color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -1165,7 +1432,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true; padding: 4
                                     text: radar_tag.modelData.label
                                     background: Item {}
-                                    contentItem: Text { text: parent.text; color: p.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
+                                    contentItem: Text { textFormat: Text.PlainText; text: parent.text; color: p.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
                                     onClicked: {
                                         equivalents_dialog.word = radar_tag.modelData.word;
                                         equivalents_edit.text = (s.radar_equivalents[equivalents_dialog.word] || []).join(", ");
@@ -1186,7 +1453,7 @@ ApplicationWindow {
                         }
                     }
                 }
-                Label { visible: s.radar_words.length === 0; text: "Agrega tu primer interés para empezar."; color: p.muted; Layout.margins: 18 }
+                Label { textFormat: Text.PlainText; visible: s.radar_words.length === 0; text: "Agrega tu primer interés para empezar."; color: p.muted; Layout.margins: 18 }
             }
         }
     }
@@ -1215,35 +1482,33 @@ ApplicationWindow {
                     Action { text: "+ Categoría"; active: true; onClicked: {category_dialog.edit(null);} }
                 }
                 RowLayout {
-                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
-                    Label { text: "Mostrar artículos de"; color: p.text }
-                    SettingsChoice {
-                        id: period_selector; objectName: "articlePeriodSelector"
-                        property var keys: ["hoy", "dos_dias", "semana", "mes", "ano"]
-                        model: ["Hoy", "Últimos 2 días", "Últimos 7 días", "Últimos 30 días", "Este año"]
-                        currentIndex: keys.indexOf(s.article_period)
-                        onActivated: backend.set_article_period(keys[currentIndex])
-                        Layout.fillWidth: true
+                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; spacing: 24
+                    ColumnLayout {
+                        Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop; spacing: 8
+                        Label { textFormat: Text.PlainText; text: "Mostrar artículos de"; color: p.text }
+                        SettingsChoice {
+                            id: period_selector; objectName: "articlePeriodSelector"
+                            property var keys: ["hoy", "dos_dias", "semana", "mes", "ano"]
+                            model: ["Hoy", "Últimos 2 días", "Últimos 7 días", "Últimos 30 días", "Este año"]
+                            currentIndex: keys.indexOf(s.article_period)
+                            onActivated: backend.set_article_period(keys[currentIndex])
+                            Layout.fillWidth: true; Layout.maximumWidth: 220
+                        }
+                        Label { textFormat: Text.PlainText; text: "Se aplica a todas las fuentes. Actualiza el feed para aplicar el período; requiere fecha en el RSS. Guardados, archivados y descargas se conservan."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
                     }
-                }
-                Label {
-                    text: "Se aplica a todas las fuentes. Actualiza el feed después de cambiar el período. Solo se incluyen artículos con fecha disponible en el RSS; guardados, archivados y descargas se conservan."
-                    color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
-                }
-                RowLayout {
-                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
-                    Label { text: "Conservar historial"; color: p.text }
-                    SettingsChoice {
-                        property var days: [0, 1, 7, 30, 90, 180, 365]
-                        model: ["Sin límite", "1 día", "1 semana", "30 días", "90 días", "180 días", "1 año"]
-                        currentIndex: days.indexOf(s.history_days)
-                        onActivated: backend.set_history_retention(days[currentIndex])
-                        Layout.fillWidth: true
+                    ColumnLayout {
+                        Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.alignment: Qt.AlignTop; spacing: 8
+                        Label { textFormat: Text.PlainText; text: "Conservar historial"; color: p.text }
+                        SettingsChoice {
+                            objectName: "historyRetentionSelector"
+                            property var days: [0, 1, 7, 30, 90, 180, 365]
+                            model: ["Sin límite", "1 día", "1 semana", "30 días", "90 días", "180 días", "1 año"]
+                            currentIndex: days.indexOf(s.history_days)
+                            onActivated: backend.set_history_retention(days[currentIndex])
+                            Layout.fillWidth: true; Layout.maximumWidth: 220
+                        }
+                        Label { textFormat: Text.PlainText; text: "Desde la primera recepción. Se protegen pendientes, guardados, archivados y descargas. La limpieza ocurre al iniciar y actualizar; puedes recuperar retirados durante 30 días. Se mantienen los estados de lectura y descarte."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
                     }
-                }
-                Label {
-                    text: "Plazo desde la primera recepción. Se protegen los pendientes de lectura, guardados (favoritos), archivados y descargas. La limpieza se realiza al iniciar y actualizar. Puedes recuperar los retirados durante 30 días; los estados de lectura y descarte se conservan."
-                    color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
                 }
                 Action { text: "Recuperar historial retirado…"; Layout.leftMargin: 18; onClicked: backend.navigate("retirados", "", "") }
                 Rectangle {
@@ -1253,7 +1518,7 @@ ApplicationWindow {
                     ColumnLayout {
                         id: portability_controls; anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 12; spacing: 8
                         SectionTitle { text: "Respaldo y portabilidad" }
-                        Label { text: "OPML intercambia fuentes y categorías. La copia local incluye preferencias, estados, colecciones, textos, destacados y progreso de lectura."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                        Label { textFormat: Text.PlainText; text: "OPML intercambia fuentes y categorías. La copia local incluye preferencias, estados, colecciones, textos, destacados y progreso de lectura."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
                         Flow {
                             Layout.fillWidth: true; spacing: 6; enabled: s.portability_ready
                             Action { text: "Importar OPML…"; onClicked: opml_import_file.open() }
@@ -1261,11 +1526,11 @@ ApplicationWindow {
                             Action { text: "Crear copia…"; onClicked: backup_export_file.open() }
                             Action { text: "Restaurar copia…"; onClicked: backup_import_file.open() }
                         }
-                        Label { visible: !s.portability_ready; text: "Espera a que finalicen las tareas en curso."; color: p.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                        Label { textFormat: Text.PlainText; visible: !s.portability_ready; text: "Espera a que finalicen las tareas en curso."; color: p.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     }
                 }
                 Search { objectName: "sourceSearch"; placeholderText: "Buscar fuente por nombre, web o RSS"; Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18; text: window.management_query; onTextEdited: window.management_query = text }
-                Label { visible: window.management_query.length > 0 && !s.categories.some(cat => cat.sources.some(src => window.source_matches(src))); text: "No se encontraron fuentes"; color: p.muted; Layout.leftMargin: 18 }
+                Label { textFormat: Text.PlainText; visible: window.management_query.length > 0 && !s.categories.some(cat => cat.sources.some(src => window.source_matches(src))); text: "No se encontraron fuentes"; color: p.muted; Layout.leftMargin: 18 }
                 Repeater { model: s.categories
                     delegate: Rectangle {
                         id: settings_cat; objectName: "managed_" + modelData.name; required property var modelData
@@ -1287,13 +1552,13 @@ ApplicationWindow {
                                 delegate: ColumnLayout { id: source_row; required property var modelData; Layout.fillWidth: true
                                     RowLayout { Layout.fillWidth: true
                                         Image { source: source_row.modelData.icon; visible: source.toString().length>0; Layout.preferredWidth: 16; Layout.preferredHeight: 16; smooth: true; mipmap: true }
-                                        Label { text: source_row.modelData.name; color: p.text; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                                        Label { textFormat: Text.PlainText; text: source_row.modelData.name; color: p.text; Layout.fillWidth: true; wrapMode: Text.Wrap }
                                         Action { text: "Editar"; compact: true; onClicked: source_dialog.edit(settings_cat.modelData.index,source_row.modelData) }
                                         Action { text: "↑"; compact: true; onClicked: backend.move_source(settings_cat.modelData.index,source_row.modelData.index,-1) }
                                         Action { text: "↓"; compact: true; onClicked: backend.move_source(settings_cat.modelData.index,source_row.modelData.index,1) }
                                         Action { text: "×"; compact: true; onClicked: {delete_dialog.cat=settings_cat.modelData.index;delete_dialog.src=source_row.modelData.index;delete_dialog.open();} }
                                     }
-                                    Label { text: source_row.modelData.feed || source_row.modelData.url; color: p.muted; font.pixelSize: 10; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                    Label { textFormat: Text.PlainText; text: source_row.modelData.feed || source_row.modelData.url; color: p.muted; font.pixelSize: 10; elide: Text.ElideMiddle; Layout.fillWidth: true }
                                 }
                             }
                             Action { visible: settings_cat.expanded; text: "+ Añadir fuente"; active: true; onClicked: source_dialog.edit(settings_cat.modelData.index,null) }
@@ -1310,9 +1575,9 @@ ApplicationWindow {
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
         contentItem: ColumnLayout {
             spacing: 14
-            Label { text: "Descarga todos los artículos cargados en el feed, con su texto e imagen. Las descargas existentes se conservan."; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { textFormat: Text.PlainText; text: "Descarga todos los artículos cargados en el feed, con su texto e imagen. Las descargas existentes se conservan."; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Check { id: offline_translation; text: "Incluir traducción al español"; Layout.fillWidth: true }
-            Label { text: "Preparar las traducciones requiere conexión y puede tardar. Después podrás leerlas sin internet."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { textFormat: Text.PlainText; text: "Preparar las traducciones requiere conexión y puede tardar. Después podrás leerlas sin internet."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
             RowLayout { Action { text: "Cancelar"; onClicked: bulk_dialog.close() } Action { text: "Modo offline"; active: true; onClicked: {backend.download_all(offline_translation.checked);bulk_dialog.close();} } }
         }
     }
@@ -1337,7 +1602,7 @@ ApplicationWindow {
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
         contentItem: ColumnLayout {
             spacing: 12
-            Label { text: "Las colecciones organizan tus artículos guardados y no modifican las categorías de fuentes."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { textFormat: Text.PlainText; text: "Las colecciones organizan tus artículos guardados y no modifican las categorías de fuentes."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Search { id: collection_name; placeholderText: "Nombre de la colección"; Layout.fillWidth: true; onAccepted: { backend.save_collection(text); collection_dialog.close(); } }
             RowLayout { Item { Layout.fillWidth: true } Action { text: "Cancelar"; onClicked: collection_dialog.close() } Action { text: "Crear"; active: true; onClicked: { backend.save_collection(collection_name.text); collection_dialog.close(); } } }
         }
@@ -1347,7 +1612,7 @@ ApplicationWindow {
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
         contentItem: ColumnLayout {
             spacing: 8
-            Label { text: "Un artículo puede pertenecer a varias colecciones."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { textFormat: Text.PlainText; text: "Un artículo puede pertenecer a varias colecciones."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
             Repeater { model: s.collections.slice(1)
                 delegate: Check {
                     required property var modelData
@@ -1356,7 +1621,7 @@ ApplicationWindow {
                     onClicked: backend.toggle_article_collection(article_collections.article_link, modelData.id)
                 }
             }
-            Label { visible: s.collections.length <= 1; text: "Aún no hay colecciones. Créala desde Guardados."; color: p.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
+            Label { textFormat: Text.PlainText; visible: s.collections.length <= 1; text: "Aún no hay colecciones. Créala desde Guardados."; color: p.muted; Layout.fillWidth: true; wrapMode: Text.Wrap }
             RowLayout { Item { Layout.fillWidth: true } Action { text: "Cerrar"; onClicked: article_collections.close() } }
         }
     }
@@ -1369,7 +1634,7 @@ ApplicationWindow {
         property int category_index: -1; property int source_index: -1; property string icon_url: ""
         function edit(ci,src) { category_index=ci;source_index=src?src.index:-1;src_name.text=src?src.name:"";src_url.text=src?src.url:"";src_feed.text=src?src.feed:"";src_maximum.value=src?src.maximum:100;src_translation.checked=src?src.translate:true;src_shortcut.checked=src?src.shortcut:false;src_show_shortcut.checked=src?src.show_shortcut:false;src_category.currentIndex=ci;icon_url=src?src.icon:"";open(); }
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
-        header: Label { text: source_dialog.title; color: p.text; padding: 16; font.bold: true }
+        header: Label { textFormat: Text.PlainText; text: source_dialog.title; color: p.text; padding: 16; font.bold: true }
         contentItem: ScrollView { id: source_editor_scroll; clip: true; contentWidth: availableWidth
             ColumnLayout { width: source_editor_scroll.availableWidth; spacing: 12
                 Search { id: src_name; placeholderText: "Nombre de la fuente"; Layout.fillWidth: true }
@@ -1377,13 +1642,13 @@ ApplicationWindow {
                 Check { id: src_show_shortcut; text: "Mostrar atajo en la barra superior"; Layout.fillWidth: true }
                 Check { id: src_shortcut; text: "Solo sitio web (sin cargar artículos)"; Layout.fillWidth: true }
                 Search { visible: !src_shortcut.checked; id: src_feed; placeholderText: "URL RSS (opcional, se detecta al actualizar)"; Layout.fillWidth: true }
-                Label { visible: !src_shortcut.checked; text: "Sin RSS, se intentarán extraer las publicaciones de esta página. Usa la dirección del blog o sección de noticias. Se identificarán con la etiqueta WEB."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                Label { textFormat: Text.PlainText; visible: !src_shortcut.checked; text: "Sin RSS, se intentarán extraer las publicaciones de esta página. Usa la dirección del blog o sección de noticias. Se identificarán con la etiqueta WEB."; color: p.muted; wrapMode: Text.Wrap; Layout.fillWidth: true }
                 ComboBox { id: src_category; model: s.categories; textRole: "name"; Layout.fillWidth: true; implicitHeight: 38
                     background: Rectangle { radius: 8; color: p.hover; border.color: src_category.activeFocus ? p.accent : p.border }
-                    contentItem: Text { text: src_category.displayText; color: p.text; leftPadding: 12; rightPadding: 28; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
-                    indicator: Text { text: "⌄"; color: p.muted; x: parent.width-width-12; y: (parent.height-height)/2 }
+                    contentItem: Text { textFormat: Text.PlainText; text: src_category.displayText; color: p.text; leftPadding: 12; rightPadding: 28; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+                    indicator: Text { textFormat: Text.PlainText; text: "⌄"; color: p.muted; x: parent.width-width-12; y: (parent.height-height)/2 }
                     delegate: ItemDelegate { required property var modelData; width: src_category.width; text: modelData.name
-                        contentItem: Text { text: parent.text; color: p.text; padding: 8 }
+                        contentItem: Text { textFormat: Text.PlainText; text: parent.text; color: p.text; padding: 8 }
                         background: Rectangle { color: parent.hovered ? p.hover : p.panel }
                     }
                     popup: Popup { y: src_category.height+4; width: src_category.width; implicitHeight: Math.min(240, category_choices.contentHeight+8); padding: 4
@@ -1391,18 +1656,18 @@ ApplicationWindow {
                         contentItem: ListView { id: category_choices; clip: true; model: src_category.popup.visible ? src_category.delegateModel : null; currentIndex: src_category.highlightedIndex }
                     }
                 }
-                RowLayout { visible: !src_shortcut.checked; Label { text: "Límite por fuente"; color:p.text } SpinBox { id: src_maximum; from:1; to:1000; implicitWidth: 150; implicitHeight: 38
+                RowLayout { visible: !src_shortcut.checked; Label { textFormat: Text.PlainText; text: "Límite por fuente"; color:p.text } SpinBox { id: src_maximum; from:1; to:1000; implicitWidth: 150; implicitHeight: 38
                     background: Rectangle { color: p.hover; radius: 8; border.color: src_maximum.activeFocus ? p.accent : p.border }
-                    contentItem: Text { text: src_maximum.value; color: p.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    down.indicator: Rectangle { x: 0; width: 36; height: parent.height; radius: 8; color: src_maximum.down.hovered ? p.border : p.hover; Text { anchors.centerIn: parent; text: "−"; color: p.text; font.pixelSize: 20 } }
-                    up.indicator: Rectangle { x: parent.width-width; width: 36; height: parent.height; radius: 8; color: src_maximum.up.hovered ? p.border : p.hover; Text { anchors.centerIn: parent; text: "+"; color: p.text; font.pixelSize: 20 } }
+                    contentItem: Text { textFormat: Text.PlainText; text: src_maximum.value; color: p.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    down.indicator: Rectangle { x: 0; width: 36; height: parent.height; radius: 8; color: src_maximum.down.hovered ? p.border : p.hover; Text { textFormat: Text.PlainText; anchors.centerIn: parent; text: "−"; color: p.text; font.pixelSize: 20 } }
+                    up.indicator: Rectangle { x: parent.width-width; width: 36; height: parent.height; radius: 8; color: src_maximum.up.hovered ? p.border : p.hover; Text { textFormat: Text.PlainText; anchors.centerIn: parent; text: "+"; color: p.text; font.pixelSize: 20 } }
                 } }
                 Switch { visible: !src_shortcut.checked; id: src_translation; text: "Traducir títulos al español"; Layout.fillWidth: true; padding: 10; spacing: 12
                     background: Rectangle { radius: 8; color: p.hover; border.color: src_translation.hovered ? p.accent : p.border }
                     indicator: Rectangle { x: 10; y: (src_translation.height-height)/2; width: 42; height: 24; radius: 12; color: src_translation.checked ? ((s.theme === "gris" || s.theme === "periodico") ? "#62834b" : p.accent) : "#777b82"
                         Rectangle { x: src_translation.checked ? 21 : 3; y: 3; width: 18; height: 18; radius: 9; color: "#ffffff"; Behavior on x { NumberAnimation { duration: 110 } } }
                     }
-                    contentItem: Text { text: src_translation.text; color: p.text; leftPadding: 54; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { textFormat: Text.PlainText; text: src_translation.text; color: p.text; leftPadding: 54; verticalAlignment: Text.AlignVCenter }
                 }
                 RowLayout { Action { text: "Elegir icono"; onClicked: icon_file.open() } Action { text: "Quitar icono"; onClicked: source_dialog.icon_url="" } }
                 RowLayout { Action { text: "Cancelar"; onClicked: source_dialog.close() } Action { text: "Guardar"; active:true; onClicked: {if (backend.save_source(source_dialog.category_index,source_dialog.source_index,src_category.currentIndex,src_name.text,src_url.text,src_feed.text,src_maximum.value,src_translation.checked,source_dialog.icon_url,src_shortcut.checked,src_show_shortcut.checked)) source_dialog.close();} } }
@@ -1426,7 +1691,7 @@ ApplicationWindow {
         background: Rectangle { color: p.bg; border.color: p.border; radius: 10 }
         header: RowLayout {
             spacing: 8
-            Label { text: image_viewer.image_description || "Imagen del artículo"; color: p.text; elide: Text.ElideRight; Layout.fillWidth: true; Layout.margins: 12 }
+            Label { textFormat: Text.PlainText; text: image_viewer.image_description || "Imagen del artículo"; color: p.text; elide: Text.ElideRight; Layout.fillWidth: true; Layout.margins: 12 }
             Action { text: "−"; enabled: image_viewer.zoom > 1; onClicked: image_viewer.zoom = Math.max(1, image_viewer.zoom / 1.5); Accessible.name: "Reducir imagen" }
             Action { text: "Ajustar"; onClicked: { image_viewer.zoom = 1; image_pan.contentX = 0; image_pan.contentY = 0; } }
             Action { text: "+"; objectName: "enlargeArticleImage"; enabled: image_viewer.zoom < 4; onClicked: image_viewer.zoom = Math.min(4, image_viewer.zoom * 1.5); Accessible.name: "Ampliar imagen" }
@@ -1461,25 +1726,27 @@ ApplicationWindow {
         id: quote_dialog; objectName: "quote_dialog"; anchors.centerIn: parent; modal: true; title: "Preparar imagen de la cita"; width: Math.min(820,window.width-30); height: Math.min(580,window.height-30)
         property int background_index: 0
         property var backgrounds: [{key: "", name: "Según el tema", start: "#171b20", end: "#171b20"}].concat(s.quote_backgrounds || [])
+        property bool show_link: false; property bool show_source_icon: true
         property bool spanish: false; property bool title_spanish: false; property bool include_image: false; property int color_index: 0
         function regenerate() {quote_delay.restart();}
-        onOpened: {background_index=0;spanish=s.quote_is_translated;title_spanish=s.quote_title_has_translation && spanish;include_image=false;color_index=Math.max(0,s.themes.findIndex(t=>t.key===s.theme));regenerate();}
+        onOpened: {background_index=Math.max(0,backgrounds.findIndex(b=>b.key==="choroy"));spanish=s.quote_is_translated;title_spanish=s.quote_title_has_translation && spanish;include_image=false;color_index=Math.max(0,s.themes.findIndex(t=>t.key===s.theme));regenerate();}
         background: Rectangle { color: p.panel; radius: 12; border.color: p.border }
-        header: Label { text: quote_dialog.title; padding: 18; color: p.text; font.bold: true; font.pixelSize: 17 }
+        header: Label { textFormat: Text.PlainText; text: quote_dialog.title; padding: 18; color: p.text; font.bold: true; font.pixelSize: 17 }
         contentItem: RowLayout {
             spacing: 18
-            ColumnLayout { Layout.preferredWidth: 210; Layout.alignment: Qt.AlignTop; spacing: 14
+            ScrollView { id: quote_options; Layout.preferredWidth: 230; Layout.fillHeight: true; clip: true; contentWidth: availableWidth
+            ColumnLayout { width: quote_options.availableWidth; spacing: 12
                 Button { objectName: "quoteLanguageButton"; text: quote_dialog.spanish ? "Mostrar idioma original" : "Mostrar traducción"; onClicked: {
                     if (quote_dialog.spanish && !s.quote_has_original) quote_original_dialog.open();
                     else { quote_dialog.spanish = !quote_dialog.spanish; quote_dialog.regenerate(); }
                 }
-                    background: Rectangle { color: parent.hovered?p.hover:p.card; radius:6 } contentItem: Text { text:parent.text;color:p.text;padding:10;wrapMode:Text.Wrap } Layout.fillWidth:true
+                    background: Rectangle { color: parent.hovered?p.hover:p.card; radius:6 } contentItem: Text { textFormat: Text.PlainText; text:parent.text;color:p.text;padding:10;wrapMode:Text.Wrap } Layout.fillWidth:true
                 }
                 CheckBox {
                     id: quote_title_language; text: "Título en español"
                     Layout.fillWidth: true; spacing: 8; enabled: s.quote_title_has_translation; checked: quote_dialog.title_spanish
                     onClicked: { quote_dialog.title_spanish=checked; quote_dialog.regenerate(); }
-                    contentItem: Text {
+                    contentItem: Text { textFormat: Text.PlainText;
                         text: quote_title_language.text; color: quote_title_language.enabled ? p.text : p.muted
                         leftPadding: quote_title_language.indicator.width + quote_title_language.spacing
                         wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter
@@ -1487,7 +1754,7 @@ ApplicationWindow {
                     indicator: Rectangle {
                         width: 20; height: 20; y: (quote_title_language.height-height)/2; radius: 4
                         color: quote_title_language.checked ? p.accent : p.card; border.color: p.muted
-                        Text { anchors.centerIn: parent; text: quote_title_language.checked ? "✓" : ""; color: p.accent_text }
+                        Text { textFormat: Text.PlainText; anchors.centerIn: parent; text: quote_title_language.checked ? "✓" : ""; color: p.accent_text }
                     }
                 }
                 CheckBox {
@@ -1495,7 +1762,7 @@ ApplicationWindow {
                     Layout.fillWidth: true; spacing: 8
                     enabled: s.quote_has_image; checked: quote_dialog.include_image
                     onClicked: {quote_dialog.include_image=checked;quote_dialog.regenerate();}
-                    contentItem: Text {
+                    contentItem: Text { textFormat: Text.PlainText;
                         text: quote_image_check.text; color: quote_image_check.enabled ? p.text : p.muted
                         leftPadding: quote_image_check.indicator.width + quote_image_check.spacing
                         wrapMode: Text.Wrap; verticalAlignment: Text.AlignVCenter
@@ -1503,10 +1770,12 @@ ApplicationWindow {
                     indicator: Rectangle {
                         width: 20; height: 20; y: (quote_image_check.height-height)/2; radius: 4
                         color: quote_image_check.checked ? p.accent : p.card; border.color: p.muted
-                        Text { anchors.centerIn: parent; text: quote_image_check.checked ? "✓" : ""; color: p.accent_text }
+                        Text { textFormat: Text.PlainText; anchors.centerIn: parent; text: quote_image_check.checked ? "✓" : ""; color: p.accent_text }
                     }
                 }
-                Label { text: "Fondo de la cita"; color: p.text }
+                Check { objectName: "quoteShowLink"; text: "Mostrar enlace"; checked: quote_dialog.show_link; Layout.fillWidth: true; onClicked: { quote_dialog.show_link = checked; quote_dialog.regenerate(); } }
+                Check { objectName: "quoteShowSourceIcon"; text: "Mostrar icono de la web"; checked: quote_dialog.show_source_icon; Layout.fillWidth: true; onClicked: { quote_dialog.show_source_icon = checked; quote_dialog.regenerate(); } }
+                Label { textFormat: Text.PlainText; text: "Fondo de la cita"; color: p.text }
                 ComboBox {
                     objectName: "quoteBackgroundSelector"
                     Layout.fillWidth: true; model: quote_dialog.backgrounds; textRole: "name"
@@ -1524,14 +1793,15 @@ ApplicationWindow {
                 }
                 Button { visible: quote_dialog.background_index === 0; text:"Color " + s.themes[quote_dialog.color_index].name; Layout.fillWidth:true; onClicked:{quote_dialog.color_index=(quote_dialog.color_index+1)%s.themes.length;quote_dialog.regenerate();}
                     background:Rectangle { color:s.themes[quote_dialog.color_index].key==="periodico"?"#e6e6e6":"#232a34";radius:6 }
-                    contentItem:Text {text:parent.text;color:s.themes[quote_dialog.color_index].color;wrapMode:Text.Wrap;padding:10}
+                    contentItem:Text { textFormat: Text.PlainText;text:parent.text;color:s.themes[quote_dialog.color_index].color;wrapMode:Text.Wrap;padding:10}
                 }
-                Label { text:s.quote_busy?"Actualizando vista previa…":s.quote_is_translated && !s.quote_has_original?"Mostrar idioma original permite seleccionar las palabras exactas de la fuente.":"Vista previa · 2160 × 2160 · PNG o JPG"; color:p.muted; wrapMode:Text.Wrap; Layout.fillWidth:true }
+                Label { textFormat: Text.PlainText; text:s.quote_busy?"Actualizando vista previa…":s.quote_is_translated && !s.quote_has_original?"Mostrar idioma original permite seleccionar las palabras exactas de la fuente.":"Vista previa · 2160 × 2160 · PNG o JPG"; color:p.muted; wrapMode:Text.Wrap; Layout.fillWidth:true }
+            }
             }
             Image { source:s.quote_preview; Layout.fillWidth:true; Layout.fillHeight:true; fillMode:Image.PreserveAspectFit; smooth:true; mipmap:true; cache:false }
         }
-        footer: RowLayout { Item {Layout.fillWidth:true} Button {text:"Cancelar";onClicked:quote_dialog.close()} Button {text:"Guardar imagen…";enabled:s.quote_can_save;onClicked:quote_file.open()} Item {width:12} }
-        Timer { id:quote_delay;interval:150;onTriggered:backend.update_quote(quote_dialog.spanish,quote_dialog.include_image,quote_dialog.title_spanish,s.themes[quote_dialog.color_index].key,quote_dialog.backgrounds[quote_dialog.background_index].key) }
+        footer: RowLayout { Item {Layout.fillWidth:true} Button {text:"Cancelar";onClicked:quote_dialog.close()} Button {text:"Copiar enlace";onClicked:backend.copy_quote_link()} Button {text:"Guardar imagen…";enabled:s.quote_can_save;onClicked:quote_file.open()} Item {width:12} }
+        Timer { id:quote_delay;interval:150;onTriggered:backend.update_quote(quote_dialog.spanish,quote_dialog.include_image,quote_dialog.title_spanish,s.themes[quote_dialog.color_index].key,quote_dialog.backgrounds[quote_dialog.background_index].key,quote_dialog.show_link,quote_dialog.show_source_icon) }
     }
     FileDialog { options: FileDialog.DontUseNativeDialog; id: opml_import_file; title: "Importar fuentes y categorías"; nameFilters: ["Fuentes OPML (*.opml *.xml)"]; onAccepted: backend.portability_action("import_opml", selectedFile.toString()) }
     FileDialog { options: FileDialog.DontUseNativeDialog; id: opml_export_file; title: "Exportar fuentes y categorías"; fileMode: FileDialog.SaveFile; defaultSuffix: "opml"; nameFilters: ["Fuentes OPML (*.opml)"]; onAccepted: backend.portability_action("export_opml", selectedFile.toString()) }
@@ -1542,9 +1812,9 @@ ApplicationWindow {
         property string backup_url: ""
         title: "Restaurar datos locales"
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
-        header: Label { text: restore_confirmation.title; color: p.text; font.bold: true; padding: 16 }
+        header: Label { textFormat: Text.PlainText; text: restore_confirmation.title; color: p.text; font.bold: true; padding: 16 }
         contentItem: ColumnLayout {
-            Label { text: "Se reemplazarán las fuentes, preferencias, estados y colecciones actuales por los de la copia. Antes se guardará una copia automática del estado actual en la carpeta backups. El archivo se validará antes de modificar tus datos."; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { textFormat: Text.PlainText; text: "Se reemplazarán las fuentes, preferencias, estados y colecciones actuales por los de la copia. Antes se guardará una copia automática del estado actual en la carpeta backups. El archivo se validará antes de modificar tus datos."; color: p.text; wrapMode: Text.Wrap; Layout.fillWidth: true }
             RowLayout {
                 Action { text: "Cancelar"; onClicked: restore_confirmation.close() }
                 Action { text: "Restaurar"; enabled: s.portability_ready; active: true; onClicked: { restore_confirmation.close(); backend.portability_action("restore", restore_confirmation.backup_url); } }
@@ -1554,7 +1824,7 @@ ApplicationWindow {
     Popup {
         anchors.centerIn: parent; modal: true; visible: s.portability_busy; closePolicy: Popup.NoAutoClose
         background: Rectangle { color: p.panel; radius: 10; border.color: p.border }
-        contentItem: Label { text: "Procesando archivo local…"; color: p.text; padding: 20 }
+        contentItem: Label { textFormat: Text.PlainText; text: "Procesando archivo local…"; color: p.text; padding: 20 }
     }
     Dialog {
         id: quote_original_dialog; objectName: "quoteOriginalDialog"; anchors.centerIn: parent
@@ -1562,12 +1832,12 @@ ApplicationWindow {
         width: Math.min(720, window.width - 40); height: Math.min(560, window.height - 40)
         onOpened: original_quote_text.deselect()
         contentItem: ColumnLayout {
-            Label { text: "Selecciona el pasaje original correspondiente a tu cita (hasta 500 caracteres)."; wrapMode: Text.Wrap; Layout.fillWidth: true; color: p.text }
+            Label { textFormat: Text.PlainText; text: "Selecciona el pasaje original correspondiente a tu cita (hasta 500 caracteres)."; wrapMode: Text.Wrap; Layout.fillWidth: true; color: p.text }
             ScrollView {
                 Layout.fillWidth: true; Layout.fillHeight: true; clip: true
                 TextArea { id: original_quote_text; objectName: "quoteOriginalText"; text: s.quote_original_body || ""; readOnly: true; selectByMouse: true; persistentSelection: true; wrapMode: TextEdit.Wrap; textFormat: TextEdit.PlainText; color: p.text; selectionColor: p.accent }
             }
-            Label { text: original_quote_text.selectedText.length + " / 500 caracteres"; color: p.muted }
+            Label { textFormat: Text.PlainText; text: original_quote_text.selectedText.length + " / 500 caracteres"; color: p.muted }
         }
         footer: RowLayout {
             Item { Layout.fillWidth: true }
@@ -1580,7 +1850,7 @@ ApplicationWindow {
     FileDialog { options: FileDialog.DontUseNativeDialog; id:quote_file;title:"Guardar cita";fileMode:FileDialog.SaveFile;currentFolder:s.downloads_folder;nameFilters:["Imagen PNG (*.png)","Imagen JPG (*.jpg *.jpeg)"];defaultSuffix:selectedNameFilter.index===1?"jpg":"png";onAccepted:backend.export_quote(selectedFile.toString()) }
     Dialog { id:error_dialog;anchors.centerIn:parent;modal:true;title:"Choroy Reader";standardButtons:Dialog.Ok;width:Math.min(480,window.width-40)
         property string message:""
-        Label {text:error_dialog.message;wrapMode:Text.Wrap;width:parent.width;color:p.text}
+        Label { textFormat: Text.PlainText;text:error_dialog.message;wrapMode:Text.Wrap;width:parent.width;color:p.text}
         background:Rectangle {color:p.panel;radius:8;border.color:p.border}
     }
     Connections {target:backend;function onError(message){error_dialog.message=message;error_dialog.open();}}

@@ -1089,6 +1089,8 @@
     "https://www.darkreading.com/cyberattacks-data-breaches/ghost-service-accounts-m365-data-theft-chile",
     "https://www.eff.org/deeplinks/2026/09/dc-circuit-must-vacate-drone-flight-restriction-criminalized-recording-immigration",
     "https://www.futuro.cl/2026/09/de-una-forma-u-otra-la-perversa-historia-detras-de-one-way-or-another-de-blondie/",
+    "https://www.futuro.cl/2026/09/dos-musicos-llegan-directamente-desde-nashville-para-una-noche-de-country-rock-y-blues-en-santiago-radio-futuro-tiene-entradas/",
+    "https://www.futuro.cl/2026/09/emperor-prepara-un-reencuentro-que-parecia-imposible-en-chile-volvera-con-dos-de-sus-miembros-fundadores-para-un-show-muy-especial/",
     "https://www.futuro.cl/2026/09/este-festival-prepara-un-encuentro-sobre-democracia-y-tendra-a-un-inesperado-protagonista-en-santiago/",
     "https://www.futuro.cl/2026/09/luctus-hydra-se-presenta-en-nueva-version-de-ancient-demons-gana-entradas/",
     "https://www.privacyguides.org/posts/2026/03/03/how-to-game-privately/",
@@ -1328,20 +1330,52 @@
     ]
   },
   "descartados": [
+    "http://www.df.cl/df-lab/innovacion-y-startups/fintech-curicana-haulmer-lanza-andco-una-cuenta-digital-con-abono",
+    "http://www.df.cl/economia-y-politica/congreso/en-medio-de-controversia-por-retiro-de-reforma-kast-se-reune-con",
+    "http://www.df.cl/economia-y-politica/laboral-personas/el-doble-que-hace-tres-decadas-en-chile-casi-un-20-de-la-poblacion-tiene",
+    "http://www.df.cl/economia-y-politica/macro/constitucion-de-empresas-se-recupera-en-agosto-con-el-comercio-y-la",
+    "http://www.df.cl/economia-y-politica/pais/eduardo-valenzuela-asume-como-director-de-la-escuela-de-gobierno-de-la",
+    "http://www.df.cl/economia-y-politica/pais/subsecretaria-de-turismo-y-congreso-futuro-impulsan-acuerdo-nacional-para",
+    "http://www.df.cl/economia-y-politica/politica/kast-aborda-el-complejo-momento-economico-sabemos-que-no-han-sido-meses",
+    "http://www.df.cl/empresas/industria/vina-errazuriz-pierde-disputa-por-multa-de-32-millones-por-ruidos-en",
+    "http://www.df.cl/empresas/retail/cencosud-recurre-a-la-corte-suprema-tras-fallo-que-confirma-ocupacion",
+    "http://www.df.cl/empresas/retail/tiendas-proveedores-y-apuesta-digital-la-ruta-de-las-primeras-semanas-de",
+    "http://www.df.cl/internacional/economia/colombiana-geopark-invertira-us-7-000-millones-para-elevar-la-produccion",
+    "http://www.df.cl/internacional/economia/trump-se-reune-esta-tarde-con-lideres-de-nvidia-anthropic-y-palantir-para",
+    "http://www.df.cl/internacional/politica/lula-y-flavio-bolsonaro-empatan-en-las-encuestas-a-dias-de-la-primera",
+    "http://www.df.cl/mercados/bolsa-monedas/bolsas-hoy-33zbp",
+    "http://www.df.cl/mercados/bolsa-monedas/dolar-hoy-89g7x",
+    "http://www.df.cl/mercados/bolsa-monedas/que-paso-con-las-tecnologicas-que-prometian-salir-a-bolsa-en-2026",
+    "http://www.df.cl/regiones/antofagasta/empresas/sindicatos-distrito-centinela-y-minera-esperanza-convocan-a-una",
+    "http://www.df.cl/regiones/biobio/talcahuano-pone-primera-piedra-de-inversion-de-17-mil-millones-para",
+    "http://www.df.cl/regiones/nuble/empresas/nuble-aprueba-construccion-de-central-de-energia-solar-en-chillan-por-us",
+    "http://www.df.cl/regiones/tarapaca/zofri-hace-nuevo-ajuste-en-su-directorio-y-designa-a-marcos-gomez-para",
+    "https://anci.gob.cl/eventos/shesecures2026/",
     "https://blog.mozilla.org/en/firefox/firefox-window-types/",
+    "https://djmag.com/news/sasha-and-john-digweed-auction-rare-northern-exposure-records-and-memorabilia",
+    "https://djmag.com/tech/native-instruments-announces-maschine-37-new-creative-sequencing-tools",
     "https://feed.itsfoss.com/link/24361/17472237/foss-weekly-26-39",
     "https://feed.itsfoss.com/link/24361/17473313/netherlands-dawo-initiative",
+    "https://feed.itsfoss.com/link/24361/17477655/opensuse-leap-immutable",
+    "https://frostyard.github.io/nsl/",
+    "https://jorgegarciaherrero.com/wp-content/interactivos/20260916-Prompt-like-a-butterfly-sting-like-a-tracker-(clean).pdf",
     "https://matrix.org/blog/2026/09/25/this-week-in-matrix-2026-09-25/",
+    "https://metalinjection.net/news/slipknots-jim-root-new-album-will-hurt-feelings-doesnt-want-to-be-overproduced",
     "https://thehackernews.com/2026/09/secrets-sprawl-is-identity-problem-that.html",
     "https://thehackernews.com/2026/09/teamfiltration-compromises-seven.html",
+    "https://www.bleepingcomputer.com/news/security/apple-patches-coregraphics-zero-day-flaw-exploited-in-attacks/",
     "https://www.bleepingcomputer.com/news/security/cisa-warns-of-sharepoint-wso2-adobe-commerce-flaws-exploited-in-attacks/",
     "https://www.futuro.cl/2026/09/despues-de-23-anos-volvieron-a-compartir-escenario-y-ahora-gondwana-y-quique-neira-preparan-su-regreso-a-chile-tras-hacer-historia-en-mexico/",
+    "https://www.futuro.cl/2026/09/despues-de-cerrar-rec-ante-una-multitud-jet-confirma-su-regreso-a-chile-y-ahora-hara-algo-que-sus-fanaticos-esperaban-hace-anos/",
     "https://www.futuro.cl/2026/09/despues-de-ocho-anos-sin-publicar-un-disco-una-historica-banda-chilena-vuelve-con-una-cancion-sobre-las-amistades-que-sobreviven-al-tiempo/",
     "https://www.futuro.cl/2026/09/dia-del-cine-2026-en-chile-entradas-desde-2-000-fechas-cines-y-como-comprar-en-preventa/",
     "https://www.futuro.cl/2026/09/epico-u2-regresa-a-su-colegio-en-dublin-para-un-concierto-secreto-por-sus-50-anos/",
     "https://www.futuro.cl/2026/09/los-pilotos-de-masters-of-dirt-anticipan-su-regreso-a-chile-el-evento-que-viene-es-el-mejor-del-mundo/",
     "https://www.futuro.cl/2026/09/rechazo-el-papel-de-su-vida-en-un-clasico-del-cine-recomendo-a-un-desconocido-para-reemplazarlo-y-cambio-hollywood-para-siempre-muere-a-los-90-anos/",
-    "https://www.technologyreview.com/2026/09/24/1145064/the-download-bid-scrap-virtual-wall-ai-climate-week/"
+    "https://www.futuro.cl/2026/09/una-banda-historica-del-death-metal-chileno-prepara-algo-especial-en-mibar-presentara-material-que-esta-a-punto-de-llegar-al-mercado/",
+    "https://www.technologyreview.com/2026/09/24/1145064/the-download-bid-scrap-virtual-wall-ai-climate-week/",
+    "https://www.theverge.com/news/1002099/xbox-mythic-achievement-announcement-feature",
+    "https://www.theverge.com/tech/1002107/apple-ceo-john-ternus-product-launch-strategy"
   ],
   "historial_dias": 30,
   "progreso_lectura": {
@@ -1364,6 +1398,13 @@
         "position": 0,
         "percent": 0,
         "length": 8388
+      }
+    },
+    "https://www.bleepingcomputer.com/news/security/automated-ai-agent-used-to-breach-cybersecurity-nonprofit-divd/": {
+      "es": {
+        "position": 196,
+        "percent": 5,
+        "length": 3939
       }
     }
   },
@@ -1406,6 +1447,6 @@
     "https://haveibeenpwned.com/",
     "https://thehackernews.com/"
   ],
-  "mostrar_imagenes_lectura": true,
+  "mostrar_imagenes_lectura": false,
   "tamano_letra_lectura": 20
 }

@@ -24,6 +24,11 @@ def collect(output, bundled_binaries=()):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     result = []
+    font_notice = Path(__file__).resolve().parent.parent / 'assets/fonts/LICENSE.txt'
+    if font_notice.is_file():
+        shutil.copyfile(font_notice, output / 'DejaVu-Fonts.txt')
+        result.append(dict(name='DejaVu Fonts', version='2.37', license='Bitstream Vera y dominio público',
+                           url='https://dejavu-fonts.github.io/License.html', files=['DejaVu-Fonts.txt']))
     for package, (debian, url) in PACKAGES.items():
         try:
             dist = metadata.distribution(package)

@@ -1,4 +1,5 @@
 """Servicios y estado persistente, independientes de la interfaz gráfica."""
+from .safe_images import open_image
 import copy
 import hashlib
 import io
@@ -39,7 +40,11 @@ class Service:
         for article in self.library.list_items('feed'):
             self.articles.setdefault(article.get('source_url', ''), []).append(article)
         self.content = {}
+        from .search_index import SearchIndex
+        self.search_index = SearchIndex()
         self.reader_store = ReaderStore(self.root / "reader_state.sqlite3")
+        from .forest import Forest
+        self.forest = Forest(self.reader_store)
         self.lifecycle = Lifecycle(self.reader_store)
         self.seen = set(self.config.get('vistos', []))
         self.dismissed = set(self.config.get('descartados', []))
@@ -162,6 +167,11 @@ class Service:
     def image_url(self, data):
         if not data:
             return ''
+        try:
+            with open_image(data):
+                pass
+        except (ValueError, OSError, Image.DecompressionBombError):
+            return ''
         folder = self.root / 'cache' / 'images'
         folder.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256(data).hexdigest()
@@ -180,7 +190,7 @@ class Service:
         for candidate in candidates:
             try:
                 data = core.download(candidate, timeout=8)
-                with Image.open(io.BytesIO(data)) as image:
+                with open_image(data) as image:
                     image.verify()
                 # Generar la miniatura mientras se actualiza la fuente evita
                 # decodificar imágenes en el hilo de la interfaz al publicar
@@ -193,7 +203,7 @@ class Service:
         if candidate:
             try:
                 data = core.download(candidate, timeout=8)
-                with Image.open(io.BytesIO(data)) as image:
+                with open_image(data) as image:
                     image.verify()
                 self.image_url(data)
                 return data
@@ -229,7 +239,7 @@ class Service:
                 continue
             try:
                 data = core.download(candidate, timeout=6)
-                with Image.open(io.BytesIO(data)) as icon:
+                with open_image(data) as icon:
                     icon.thumbnail((64, 64), Image.Resampling.LANCZOS)
                     path.parent.mkdir(parents=True, exist_ok=True)
                     icon.convert('RGBA').save(path, 'PNG')
@@ -337,6 +347,11 @@ class Service:
                     self.remember_article(article)
         for batch in articles.values():
             for article in batch:
+                self.forest.record(article, 'received')
+                if self.config.get('radar_palabras'):
+                    self.forest.record(article, 'evaluated')
+                    if self.score(article, details=True)[0] > 0:
+                        self.forest.record(article, 'matched')
                 self.remember_article(article)
         # Una respuesta RSS válida sin entradas para el período no significa que
         # hayan desaparecido los artículos ya descargados. Mantener el snapshot
@@ -414,7 +429,7 @@ class Service:
                 if 'source' not in entry:
                     try:
                         data = core.download(entry['url'], timeout=10)
-                        with Image.open(io.BytesIO(data)) as image:
+                        with open_image(data) as image:
                             image.thumbnail((1200, 1200))
                             out = io.BytesIO()
                             image.convert('RGB').save(out, 'JPEG', quality=85)
@@ -530,7 +545,7 @@ class Service:
             start = start.replace(month=1, day=1)
         return start <= date <= now
 
-    def filtered(self, page='feed', category='', source='', query=''):
+    def filtered(self, page='feed', category='', source='', query='', include_body=False):
         articles = self.library.list_items(page) if page in {'guardados', 'descargas', 'archivados', 'historial', 'retirados'} else self.all_articles()
         if page == 'feed':
             articles = [a for a in articles if self.in_period(a.get('fecha'))
@@ -542,7 +557,16 @@ class Service:
         if source:
             articles = [a for a in articles if a.get('source_url') == source]
         if query:
-            articles = [a for a in articles if find_matches(a.get('titulo', '') + ' ' + (a.get('titulo_es') or ''), query)]
+            bodies = {}
+            if include_body and page == 'guardados':
+                with self.reader_store.connect() as db:
+                    bodies = {link: (original or '') + '\n' + (translation or '')
+                              for link, original, translation in db.execute('SELECT link, original, translation FROM reader_state')}
+            documents = [(a['link'], a.get('titulo', '') + ' ' + (a.get('titulo_es') or ''),
+                          (a.get('cuerpo') or '') + '\n' + bodies.get(a['link'], '') if include_body and page == 'guardados' else '')
+                         for a in articles]
+            matches = self.search_index.match(documents, query, include_body and page == 'guardados')
+            articles = [a for a in articles if a['link'] in matches]
         if page != 'guardados' and self.config.get('radar_activo'):
             articles.sort(key=self.score, reverse=True)
         if page == "feed":
