@@ -60,19 +60,19 @@ no sustituye la instalación en un equipo limpio. Los paquetes no deben incluir
 
 ```bash
 .venv/bin/python -m pip install -r requirements_build.txt
-.venv/bin/python -m PyInstaller --noconfirm packaging/choroy_reader.spec
+.venv/bin/python -m PyInstaller --noconfirm --distpath dist/_compilacion/linux packaging/choroy_reader.spec
 .venv/bin/python packaging/build_linux.py
-.venv/bin/python packaging/verify_linux.py dist/choroy_reader_0.1.1_amd64.deb
+.venv/bin/python packaging/verify_linux.py dist/0.1.1/Linux/choroy_reader_0.1.1_amd64.deb
 ```
 
-El resultado esperado es `dist/choroy_reader_0.1.1_amd64.deb` (o `arm64`).
+El resultado esperado es `dist/0.1.1/Linux/choroy_reader_0.1.1_amd64.deb` (o `arm64`).
 Incluye acceso en el menú de aplicaciones y un ejecutable con Python y Qt.
 La versión se toma de `assets/app_info.json`; el constructor rechaza versiones
 distintas, recursos incompletos o datos personales dentro del ejecutable.
 También genera un archivo `.deb.sha256` junto al paquete. Para comprobarlo:
 
 ```bash
-cd dist
+cd dist/0.1.1/Linux
 sha256sum -c choroy_reader_0.1.1_amd64.deb.sha256
 ```
 
@@ -100,7 +100,7 @@ python -m pip install -r requirements_build.txt
 powershell -ExecutionPolicy Bypass -File packaging/build_windows.ps1
 ```
 
-El script requiere Inno Setup 6 y crea `dist/Choroy-Reader-Setup-0.1.1-x64.exe`
+El script requiere Inno Setup 6 y crea `dist/0.1.1/Windows/Choroy-Reader-Setup-0.1.1-x64.exe`
 y su SHA-256. El asistente incluye bienvenida, icono y arte del bosque, idiomas
 español/inglés y acceso directo opcional. Instala por usuario sin pedir permisos
 de administrador y conserva la biblioteca al actualizar. Construcción para
@@ -280,3 +280,7 @@ reinicia al cambiar de artículo o idioma.
 En el editor de citas, **Mostrar enlace** y **Mostrar icono de la web** son
 independientes. El enlace está oculto inicialmente; el icono se muestra si está
 disponible. **Copiar enlace** sigue disponible aunque no aparezca en la imagen.
+
+Los instaladores se organizan en `dist/<versión>/Linux/` y
+`dist/<versión>/Windows/`. `dist/_compilacion/` contiene los archivos de
+trabajo del empaquetado; para instalar usa los archivos de la carpeta de versión.

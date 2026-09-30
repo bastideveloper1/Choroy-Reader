@@ -1,9 +1,9 @@
-; Compilar con Inno Setup en Windows, tras generar dist/choroy_reader.
+; Compilar con Inno Setup en Windows, tras generar dist/_compilacion/windows/choroy_reader.
 #ifndef AppVersion
   #define AppVersion "0.1.1"
 #endif
 #ifndef BundleDir
-  #define BundleDir "..\dist\choroy_reader"
+  #define BundleDir "..\dist\_compilacion\windows\choroy_reader"
 #endif
 [Setup]
 AppId=Choroy Reader
@@ -16,7 +16,7 @@ AppUpdatesURL=https://github.com/bastideveloper1/minimalfeed/releases
 DefaultDirName={localappdata}\Programs\Choroy Reader
 DefaultGroupName=Choroy Reader
 PrivilegesRequired=lowest
-OutputDir=..\dist
+OutputDir=..\dist\{#AppVersion}\Windows
 OutputBaseFilename=Choroy-Reader-Setup-{#AppVersion}-x64
 Compression=lzma2
 SolidCompression=yes

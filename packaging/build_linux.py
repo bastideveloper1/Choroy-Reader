@@ -18,7 +18,7 @@ DEPENDENCIES = ('libgl1', 'libegl1', 'libxkbcommon0', 'libxcb-cursor0', 'libxcb-
 def validate_bundle(bundle, version):
     bundle = Path(bundle)
     if not (bundle / 'choroy_reader').is_file():
-        raise ValueError('Primero genera dist/choroy_reader con PyInstaller')
+        raise ValueError('Primero genera dist/_compilacion/linux/choroy_reader con PyInstaller')
     internal = bundle / '_internal'
     required = [internal / 'assets' / name for name in REQUIRED_ASSETS]
     required += [internal / 'choroy_reader/qml' / name for name in ('main.qml', 'NoteEditor.qml')]
@@ -102,8 +102,8 @@ def main():
     if platform.system() != 'Linux' or not arch:
         parser.error('Ejecuta este script en Linux x86_64 o aarch64')
     try:
-        target = build_package(root, root / 'dist/choroy_reader', args.version, arch,
-                               root / f'dist/choroy_reader_{args.version}_{arch}.deb')
+        target = build_package(root, root / 'dist/_compilacion/linux/choroy_reader', args.version, arch,
+                               root / f'dist/{args.version}/Linux/choroy_reader_{args.version}_{arch}.deb')
     except ValueError as error:
         parser.error(str(error))
     print(target)
